@@ -4,10 +4,6 @@
 	const emptyEl = document.getElementById('chart-empty');
 	const markerNoteEl = document.getElementById('marker-note');
 	const form = document.getElementById('chart-controls');
-	const rangeSelect = form.elements['range'];
-	const customRangeRow = document.getElementById('custom-range-row');
-	const customFromInput = document.getElementById('custom-range-from');
-	const customUntilInput = document.getElementById('custom-range-until');
 	let chart = null;
 
 	function cssVar(name) {
@@ -19,24 +15,103 @@
 		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 	}
 
-	// Reveals the from/until date inputs only when "Custom range" is
-	// selected, pre-filling them (once, the first time) with a sensible
-	// default window so switching to custom doesn't start from an empty,
-	// effectively-unbounded range. Bound directly to rangeSelect (rather
-	// than relying on the form's generic 'change' listener) so this runs
-	// and fills in the defaults before that listener's refreshChart fires.
-	function updateCustomRangeVisibility() {
-		const isCustom = rangeSelect.value === 'custom';
-		customRangeRow.hidden = !isCustom;
-		if (isCustom && !customFromInput.value && !customUntilInput.value) {
-			const until = new Date();
-			const from = new Date(until);
-			from.setDate(from.getDate() - 30);
-			customUntilInput.value = formatDateInput(until);
-			customFromInput.value = formatDateInput(from);
-		}
+	// parseDateInput reads a <input type="date"> value ("2026-01-01") as a
+	// local date rather than UTC midnight — new Date('2026-01-01') parses as
+	// UTC, which can display as the previous day in negative UTC-offset
+	// zones.
+	function parseDateInput(value) {
+		const [y, m, d] = value.split('-').map(Number);
+		return new Date(y, m - 1, d);
 	}
-	rangeSelect.addEventListener('change', updateCustomRangeVisibility);
+
+	function formatDateLabel(date) {
+		return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+	}
+
+	// Grafana-style time range picker: a single button showing the active
+	// range, opening a popover with quick presets alongside a custom
+	// from/until section — rather than a <select> plus a permanently-visible
+	// (or awkwardly toggled) pair of date fields.
+	const timeRangeBtn = document.getElementById('time-range-btn');
+	const timeRangeLabel = document.getElementById('time-range-label');
+	const timeRangePopover = document.getElementById('time-range-popover');
+	const rangeInput = document.getElementById('range-input');
+	const fromInput = document.getElementById('from-input');
+	const untilInput = document.getElementById('until-input');
+	const customFromInput = document.getElementById('custom-range-from');
+	const customUntilInput = document.getElementById('custom-range-until');
+	const customApplyBtn = document.getElementById('custom-range-apply');
+	const presetButtons = Array.from(document.querySelectorAll('.time-range-preset'));
+
+	function openTimeRangePopover() {
+		timeRangePopover.hidden = false;
+		timeRangeBtn.setAttribute('aria-expanded', 'true');
+	}
+
+	function closeTimeRangePopover() {
+		timeRangePopover.hidden = true;
+		timeRangeBtn.setAttribute('aria-expanded', 'false');
+	}
+
+	timeRangeBtn.addEventListener('click', (event) => {
+		event.stopPropagation();
+		if (timeRangePopover.hidden) {
+			// Pre-fill custom from/until with the currently active range (or
+			// a trailing 30 days if a preset is active) so opening "Custom
+			// range" starts from something sensible rather than blank.
+			if (!customFromInput.value && !customUntilInput.value) {
+				const until = new Date();
+				const from = new Date(until);
+				from.setDate(from.getDate() - 30);
+				customUntilInput.value = formatDateInput(until);
+				customFromInput.value = formatDateInput(from);
+			}
+			openTimeRangePopover();
+		} else {
+			closeTimeRangePopover();
+		}
+	});
+
+	document.addEventListener('click', (event) => {
+		if (!timeRangePopover.hidden && !event.composedPath().includes(timeRangePopover) && event.target !== timeRangeBtn) {
+			closeTimeRangePopover();
+		}
+	});
+
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape' && !timeRangePopover.hidden) closeTimeRangePopover();
+	});
+
+	presetButtons.forEach((btn) => {
+		btn.addEventListener('click', () => {
+			presetButtons.forEach((b) => b.classList.remove('active'));
+			btn.classList.add('active');
+			rangeInput.value = btn.dataset.range;
+			fromInput.value = '';
+			untilInput.value = '';
+			timeRangeLabel.textContent = btn.dataset.label;
+			closeTimeRangePopover();
+			refreshChart();
+		});
+	});
+
+	customApplyBtn.addEventListener('click', () => {
+		if (!customFromInput.value && !customUntilInput.value) return;
+		presetButtons.forEach((b) => b.classList.remove('active'));
+		rangeInput.value = 'custom';
+		fromInput.value = customFromInput.value;
+		untilInput.value = customUntilInput.value;
+
+		if (customFromInput.value && customUntilInput.value) {
+			timeRangeLabel.textContent = `${formatDateLabel(parseDateInput(customFromInput.value))} – ${formatDateLabel(parseDateInput(customUntilInput.value))}`;
+		} else if (customFromInput.value) {
+			timeRangeLabel.textContent = `Since ${formatDateLabel(parseDateInput(customFromInput.value))}`;
+		} else {
+			timeRangeLabel.textContent = `Until ${formatDateLabel(parseDateInput(customUntilInput.value))}`;
+		}
+		closeTimeRangePopover();
+		refreshChart();
+	});
 
 	// markerLabelMaxWidth caps how wide a single marker's label is allowed to
 	// be before it gets truncated with an ellipsis — keeps a long note from
