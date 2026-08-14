@@ -36,6 +36,66 @@
 		return cssVar(markerPalette[idx]);
 	}
 
+	// yearBoundaries returns {year, x} for each January 1 (in the browser's
+	// local time zone, matching the x-axis tick labels) strictly between
+	// minMs and maxMs — the boundary at the very edge of the visible range
+	// isn't included since a line right at the chart's edge adds nothing.
+	function yearBoundaries(minMs, maxMs) {
+		const boundaries = [];
+		const startYear = new Date(minMs).getFullYear();
+		const endYear = new Date(maxMs).getFullYear();
+		for (let year = startYear + 1; year <= endYear; year++) {
+			const x = new Date(year, 0, 1).getTime();
+			if (x >= minMs && x <= maxMs) boundaries.push({ year, x });
+		}
+		return boundaries;
+	}
+
+	// yearBoundariesPlugin draws a solid vertical line (distinct from
+	// markers' dashed, colored lines) at each new-year boundary crossed by
+	// the visible range, labeled with the year in its own row above all
+	// marker label rows — years are rare enough (once per calendar year)
+	// that they never need the markers' overlap/stacking logic. Drawn
+	// beforeDatasetsDraw so it reads as background structure, not data.
+	const yearBoundariesPlugin = {
+		id: 'yearBoundaries',
+		beforeDatasetsDraw(chartInstance) {
+			const { ctx, chartArea, scales } = chartInstance;
+			const boundaries = yearBoundaries(scales.x.min, scales.x.max);
+			if (!boundaries.length) return;
+			ctx.save();
+			ctx.strokeStyle = cssVar('--year-boundary');
+			ctx.fillStyle = cssVar('--year-boundary');
+			ctx.lineWidth = 1;
+			ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'bottom';
+			const labelY = chartArea.top - 6 - markerLabelRows * markerLabelRowHeight;
+			boundaries.forEach(({ year, x: boundaryMs }) => {
+				const x = scales.x.getPixelForValue(boundaryMs);
+				if (x < chartArea.left || x > chartArea.right) return;
+				ctx.beginPath();
+				ctx.moveTo(x, chartArea.top);
+				ctx.lineTo(x, chartArea.bottom);
+				ctx.stroke();
+				ctx.fillText(String(year), x, labelY);
+			});
+			ctx.restore();
+		},
+	};
+	Chart.register(yearBoundariesPlugin);
+
+	// markerHitThreshold is how close (in pixels) the pointer needs to be to
+	// a marker's line for it to count as hovered/clicked — shared by the
+	// hover highlight and the click-to-reveal handler so "looks clickable"
+	// and "is clickable" always agree.
+	const markerHitThreshold = 15;
+
+	function findNearestMarker(chartInstance, pos) {
+		if (!chartInstance || !chartInstance.$markerPositions) return null;
+		return chartInstance.$markerPositions.find((m) => Math.abs(m.x - pos.x) < markerHitThreshold) || null;
+	}
+
 	// truncateToWidth shortens text with a trailing ellipsis until it fits
 	// within maxWidth for the canvas context's current font, via binary
 	// search over the cut point. Returns '' if even a single character plus
@@ -62,7 +122,10 @@
 	// left-to-right, stacking onto a further-up row (see markerLabelRows)
 	// when they'd otherwise overlap a label already on the current row;
 	// anything that doesn't fit any row is still readable via tap, using
-	// the pixel positions recorded in chart.$markerPositions.
+	// the pixel positions recorded in chart.$markerPositions. Whichever
+	// marker is currently hovered (chart.$hoveredMarkerId, kept in sync by
+	// the mousemove listener below) is drawn thicker/bolder, so it's
+	// obvious *before* clicking that a marker is about to be selected.
 	const markerLinesPlugin = {
 		id: 'markerLines',
 		afterDatasetsDraw(chartInstance) {
@@ -70,25 +133,26 @@
 			chartInstance.$markerPositions = [];
 			if (!markers.length) return;
 			const { ctx, chartArea, scales } = chartInstance;
+			const hoveredId = chartInstance.$hoveredMarkerId;
 			ctx.save();
 			ctx.setLineDash([3, 3]);
-			ctx.lineWidth = 1;
 			const positioned = [];
 			markers.forEach((m) => {
 				const x = scales.x.getPixelForValue(m.x);
 				if (x < chartArea.left || x > chartArea.right) return;
+				const hovered = m.id === hoveredId;
 				const color = colorForMarker(m.id);
 				ctx.strokeStyle = color;
+				ctx.lineWidth = hovered ? 2.5 : 1;
 				ctx.beginPath();
 				ctx.moveTo(x, chartArea.top);
 				ctx.lineTo(x, chartArea.bottom);
 				ctx.stroke();
-				positioned.push({ x, date: m.date, note: m.note, color });
+				positioned.push({ id: m.id, x, date: m.date, note: m.note, color });
 			});
 			chartInstance.$markerPositions = positioned;
 
 			ctx.setLineDash([]);
-			ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'bottom';
 			// Each row tracks the right edge of the last label placed on it;
@@ -100,6 +164,8 @@
 				.slice()
 				.sort((a, b) => a.x - b.x)
 				.forEach((m) => {
+					const hovered = m.id === hoveredId;
+					ctx.font = (hovered ? 'bold ' : '') + '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
 					const label = truncateToWidth(ctx, m.note, markerLabelMaxWidth);
 					if (!label) return;
 					const width = ctx.measureText(label).width;
@@ -221,9 +287,10 @@
 				animation: false,
 				interaction: { mode: 'nearest', intersect: false, axis: 'x' },
 				// Reserves room above the plot area for markerLinesPlugin's
-				// (possibly stacked, see markerLabelRows) labels, so they
-				// never overlap the topmost data points.
-				layout: { padding: { top: 18 + (markerLabelRows - 1) * markerLabelRowHeight } },
+				// (possibly stacked, see markerLabelRows) labels plus one
+				// more row above those for yearBoundariesPlugin's year
+				// labels, so neither ever overlaps the topmost data points.
+				layout: { padding: { top: 18 + markerLabelRows * markerLabelRowHeight } },
 				scales: {
 					x: {
 						type: 'linear',
@@ -275,6 +342,7 @@
 		}
 		canvas.hidden = false;
 		if (emptyEl) emptyEl.hidden = true;
+		canvas.style.cursor = '';
 		chart = new Chart(canvas, buildConfig(data));
 	}
 
@@ -289,7 +357,7 @@
 	canvas.addEventListener('click', (event) => {
 		if (!chart || !chart.$markerPositions || !chart.$markerPositions.length || !markerNoteEl) return;
 		const pos = Chart.helpers.getRelativePosition(event, chart);
-		const nearest = chart.$markerPositions.find((m) => Math.abs(m.x - pos.x) < 15);
+		const nearest = findNearestMarker(chart, pos);
 		if (nearest) {
 			markerNoteEl.hidden = false;
 			markerNoteEl.style.color = nearest.color;
@@ -297,6 +365,28 @@
 		} else {
 			markerNoteEl.hidden = true;
 		}
+	});
+
+	// Hovering near a marker's line switches the cursor to a pointer and
+	// redraws that marker's line/label bolder, so it's clear *before*
+	// clicking that doing so will select it — previously the only way to
+	// find that out was to click around and see what happened.
+	canvas.addEventListener('mousemove', (event) => {
+		if (!chart || !chart.$markerPositions || !chart.$markerPositions.length) return;
+		const pos = Chart.helpers.getRelativePosition(event, chart);
+		const nearest = findNearestMarker(chart, pos);
+		const hoveredId = nearest ? nearest.id : null;
+		if (chart.$hoveredMarkerId === hoveredId) return;
+		chart.$hoveredMarkerId = hoveredId;
+		canvas.style.cursor = hoveredId === null ? '' : 'pointer';
+		chart.draw();
+	});
+
+	canvas.addEventListener('mouseleave', () => {
+		if (!chart || chart.$hoveredMarkerId == null) return;
+		chart.$hoveredMarkerId = null;
+		canvas.style.cursor = '';
+		chart.draw();
 	});
 
 	form.addEventListener('change', refreshChart);
