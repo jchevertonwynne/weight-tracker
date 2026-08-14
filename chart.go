@@ -60,16 +60,58 @@ func dayNum(t time.Time) float64 {
 	return float64(t.Unix()) / 86400.0
 }
 
-// rangeCutoff turns a range query param ("7", "30", "all", ...) into an
-// inclusive lower-bound instant, or ok=false for "all"/unrecognized values.
-func rangeCutoff(rangeParam string, today time.Time) (cutoff time.Time, ok bool) {
+// rangeWindow is a resolved visible-range bound. Either side may be
+// unbounded (hasFrom/hasUntil false) — both are for the "all time" preset,
+// and either independently for a custom range where the user left that
+// side blank.
+type rangeWindow struct {
+	from     time.Time
+	hasFrom  bool
+	until    time.Time
+	hasUntil bool
+}
+
+func (w rangeWindow) contains(t time.Time) bool {
+	if w.hasFrom && t.Before(w.from) {
+		return false
+	}
+	if w.hasUntil && t.After(w.until) {
+		return false
+	}
+	return true
+}
+
+// resolveRangeWindow turns the "range" query param into a rangeWindow: a
+// preset day count ("7", "30", ...) becomes an inclusive trailing window
+// ending now; "all" (or anything else unrecognized) is unbounded; "custom"
+// reads the from/until query params instead.
+func resolveRangeWindow(rangeParam, fromParam, untilParam string, today time.Time) rangeWindow {
+	if rangeParam == "custom" {
+		return customRangeWindow(fromParam, untilParam, today.Location())
+	}
 	days, err := strconv.Atoi(rangeParam)
 	if err != nil || days <= 0 {
-		return time.Time{}, false
+		return rangeWindow{}
 	}
 	y, m, d := today.Date()
 	startOfToday := time.Date(y, m, d, 0, 0, 0, 0, today.Location())
-	return startOfToday.AddDate(0, 0, -days+1), true
+	return rangeWindow{from: startOfToday.AddDate(0, 0, -days+1), hasFrom: true}
+}
+
+// customRangeWindow parses the "from"/"until" query params (date-only, e.g.
+// "2026-01-01") for a custom range. Each is independently optional — a
+// blank or unparseable side just leaves that end of the range unbounded.
+// "until" is inclusive of the whole day.
+func customRangeWindow(fromParam, untilParam string, loc *time.Location) rangeWindow {
+	var w rangeWindow
+	if t, err := time.ParseInLocation(dateOnlyLayout, fromParam, loc); err == nil {
+		w.from, w.hasFrom = t, true
+	}
+	if t, err := time.ParseInLocation(dateOnlyLayout, untilParam, loc); err == nil {
+		w.until = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, loc)
+		w.hasUntil = true
+	}
+	return w
 }
 
 func emptyChartMessage(seriesParam string) string {
@@ -131,26 +173,26 @@ func rollingTrend(series []chartRawPoint, windowDays float64) []chartRawPoint {
 	return trend
 }
 
-// filterByCutoff drops points earlier than cutoff (a no-op if hasCutoff is
-// false). Used to trim a rolling trend — computed over full history so its
-// window is never truncated at the visible range's edge — back down to the
-// same visible window as the raw series.
-func filterByCutoff(pts []chartRawPoint, cutoff time.Time, hasCutoff bool) []chartRawPoint {
-	if !hasCutoff {
+// filterByWindow drops points outside window (a no-op if window is fully
+// unbounded). Used to trim a rolling trend — computed over full history so
+// its window is never truncated at the visible range's edge — back down to
+// the same visible window as the raw series.
+func filterByWindow(pts []chartRawPoint, window rangeWindow) []chartRawPoint {
+	if !window.hasFrom && !window.hasUntil {
 		return pts
 	}
 	var out []chartRawPoint
 	for _, p := range pts {
-		if !p.t.Before(cutoff) {
+		if window.contains(p.t) {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker, rangeParam, seriesParam string, today time.Time) ChartData {
+func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, today time.Time) ChartData {
 	chrono, _, _ := chronologicalWithDeltas(allEntries)
-	cutoff, hasCutoff := rangeCutoff(rangeParam, today)
+	window := resolveRangeWindow(rangeParam, fromParam, untilParam, today)
 	isBar := seriesParam == "morning-delta" || seriesParam == "evening-delta"
 
 	var morningDeltaByID, eveningDeltaByID map[int64]float64
@@ -164,7 +206,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 	var pts, trendSourcePts []chartRawPoint
 	for _, e := range chrono {
 		period := db.DetectPeriod(e.RecordedAt)
-		visible := !hasCutoff || !e.RecordedAt.Before(cutoff)
+		visible := window.contains(e.RecordedAt)
 		switch seriesParam {
 		case "morning", "evening":
 			if period != seriesParam {
@@ -230,7 +272,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 	// The trend line and goal reference lines only apply to the continuous
 	// weight-value series (all/morning/evening), never the delta bar charts.
 	if !isBar {
-		trendVisible := filterByCutoff(rollingTrend(trendSourcePts, trendWindowDays), cutoff, hasCutoff)
+		trendVisible := filterByWindow(rollingTrend(trendSourcePts, trendWindowDays), window)
 		if len(trendVisible) >= 2 {
 			for _, p := range trendVisible {
 				data.Trend = append(data.Trend, XY{X: msOf(p.t), Y: p.val})

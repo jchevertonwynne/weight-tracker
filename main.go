@@ -119,6 +119,8 @@ func (s *server) handleChart(w http.ResponseWriter, r *http.Request) {
 	if seriesParam == "" {
 		seriesParam = "all"
 	}
+	fromParam := r.URL.Query().Get("from")
+	untilParam := r.URL.Query().Get("until")
 	entries, err := db.ListEntries(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -134,7 +136,7 @@ func (s *server) handleChart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := buildChartData(entries, goals, markers, rangeParam, seriesParam, time.Now())
+	data := buildChartData(entries, goals, markers, rangeParam, seriesParam, fromParam, untilParam, time.Now())
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

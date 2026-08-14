@@ -11,6 +11,7 @@
 					<option value="90">Last 90 days</option>
 					<option value="365">Last year</option>
 					<option value="all">All time</option>
+					<option value="custom">Custom range</option>
 				</select>
 			</label>
 			<label class="field">
@@ -22,6 +23,16 @@
 					<option value="morning-delta">Morning deltas</option>
 					<option value="evening-delta">Evening deltas</option>
 				</select>
+			</label>
+		</div>
+		<div class="chart-controls-row" id="custom-range-row" hidden>
+			<label class="field">
+				<span>From</span>
+				<input type="date" name="from" id="custom-range-from">
+			</label>
+			<label class="field">
+				<span>Until</span>
+				<input type="date" name="until" id="custom-range-until">
 			</label>
 		</div>
 		<div class="chart-controls-row">

@@ -4,11 +4,39 @@
 	const emptyEl = document.getElementById('chart-empty');
 	const markerNoteEl = document.getElementById('marker-note');
 	const form = document.getElementById('chart-controls');
+	const rangeSelect = form.elements['range'];
+	const customRangeRow = document.getElementById('custom-range-row');
+	const customFromInput = document.getElementById('custom-range-from');
+	const customUntilInput = document.getElementById('custom-range-until');
 	let chart = null;
 
 	function cssVar(name) {
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
+
+	function formatDateInput(date) {
+		const pad = (n) => String(n).padStart(2, '0');
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+	}
+
+	// Reveals the from/until date inputs only when "Custom range" is
+	// selected, pre-filling them (once, the first time) with a sensible
+	// default window so switching to custom doesn't start from an empty,
+	// effectively-unbounded range. Bound directly to rangeSelect (rather
+	// than relying on the form's generic 'change' listener) so this runs
+	// and fills in the defaults before that listener's refreshChart fires.
+	function updateCustomRangeVisibility() {
+		const isCustom = rangeSelect.value === 'custom';
+		customRangeRow.hidden = !isCustom;
+		if (isCustom && !customFromInput.value && !customUntilInput.value) {
+			const until = new Date();
+			const from = new Date(until);
+			from.setDate(from.getDate() - 30);
+			customUntilInput.value = formatDateInput(until);
+			customFromInput.value = formatDateInput(from);
+		}
+	}
+	rangeSelect.addEventListener('change', updateCustomRangeVisibility);
 
 	// markerLabelMaxWidth caps how wide a single marker's label is allowed to
 	// be before it gets truncated with an ellipsis — keeps a long note from
