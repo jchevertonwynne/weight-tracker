@@ -12,7 +12,7 @@
 		</label>
 		<label class="field">
 			<span>Note</span>
-			<input type="text" name="note" placeholder="e.g. started new diet" required>
+			<input type="text" name="note" placeholder="e.g. started new diet" autocomplete="off" required>
 		</label>
 		<button type="submit" class="btn btn-primary">Add marker</button>
 	</form>
@@ -49,7 +49,7 @@
 <div class="entry-row entry-row-editing" id="marker-{{.ID}}">
 	<form class="edit-form" hx-put="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML">
 		<input type="date" name="date" value="{{.DateInput}}" required>
-		<input type="text" name="note" value="{{.Note}}" required>
+		<input type="text" name="note" value="{{.Note}}" autocomplete="off" required>
 		<button type="submit" class="btn btn-primary btn-small">Save</button>
 		<button type="button" class="btn-text btn-small" hx-get="/markers/{{.ID}}" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Cancel</button>
 	</form>
