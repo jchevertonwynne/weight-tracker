@@ -26,6 +26,15 @@
 	// still gets its line drawn and stays reachable via tap; it just goes
 	// without an inline label.
 	const markerLabelRows = 2;
+	// markerPalette assigns each marker a distinct color (by id, so it's
+	// stable across range changes) so its line, label, and tapped-note text
+	// all visibly pair up — otherwise two markers close enough to stack
+	// their labels are hard to tell apart.
+	const markerPalette = ['--marker', '--marker-2', '--marker-3', '--marker-4'];
+	function colorForMarker(id) {
+		const idx = ((id % markerPalette.length) + markerPalette.length) % markerPalette.length;
+		return cssVar(markerPalette[idx]);
+	}
 
 	// truncateToWidth shortens text with a trailing ellipsis until it fits
 	// within maxWidth for the canvas context's current font, via binary
@@ -62,24 +71,24 @@
 			if (!markers.length) return;
 			const { ctx, chartArea, scales } = chartInstance;
 			ctx.save();
-			ctx.strokeStyle = cssVar('--marker');
 			ctx.setLineDash([3, 3]);
 			ctx.lineWidth = 1;
 			const positioned = [];
 			markers.forEach((m) => {
 				const x = scales.x.getPixelForValue(m.x);
 				if (x < chartArea.left || x > chartArea.right) return;
+				const color = colorForMarker(m.id);
+				ctx.strokeStyle = color;
 				ctx.beginPath();
 				ctx.moveTo(x, chartArea.top);
 				ctx.lineTo(x, chartArea.bottom);
 				ctx.stroke();
-				positioned.push({ x, date: m.date, note: m.note });
+				positioned.push({ x, date: m.date, note: m.note, color });
 			});
 			chartInstance.$markerPositions = positioned;
 
 			ctx.setLineDash([]);
 			ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
-			ctx.fillStyle = cssVar('--marker');
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'bottom';
 			// Each row tracks the right edge of the last label placed on it;
@@ -97,6 +106,7 @@
 					const left = m.x - width / 2;
 					const row = rowRightEdge.findIndex((edge) => left >= edge + markerLabelGap);
 					if (row === -1) return;
+					ctx.fillStyle = m.color;
 					ctx.fillText(label, m.x, chartArea.top - 6 - row * markerLabelRowHeight);
 					rowRightEdge[row] = m.x + width / 2;
 				});
@@ -282,6 +292,7 @@
 		const nearest = chart.$markerPositions.find((m) => Math.abs(m.x - pos.x) < 15);
 		if (nearest) {
 			markerNoteEl.hidden = false;
+			markerNoteEl.style.color = nearest.color;
 			markerNoteEl.textContent = nearest.date + ': ' + nearest.note;
 		} else {
 			markerNoteEl.hidden = true;

@@ -12,11 +12,7 @@
 		</label>
 		<label class="field">
 			<span>Effective date</span>
-			<input type="date" name="effective_from_date" value="{{.NowDate}}" required>
-		</label>
-		<label class="field">
-			<span>Effective time</span>
-			<input type="time" name="effective_from_time" value="{{.NowTime}}" required>
+			<input type="date" name="effective_from" value="{{.NowDate}}" required>
 		</label>
 		<button type="submit" class="btn btn-primary">Set goal</button>
 	</form>
@@ -54,8 +50,7 @@
 <div class="entry-row entry-row-editing" id="goal-{{.ID}}">
 	<form class="edit-form" hx-put="/goals/{{.ID}}" hx-target="#goals-list" hx-swap="outerHTML">
 		<input type="number" step="0.1" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
-		<input type="date" name="effective_from_date" value="{{.EffectiveFromDate}}" required>
-		<input type="time" name="effective_from_time" value="{{.EffectiveFromTime}}" required>
+		<input type="date" name="effective_from" value="{{.EffectiveFromDate}}" required>
 		<button type="submit" class="btn btn-primary btn-small">Save</button>
 		<button type="button" class="btn-text btn-small" hx-get="/goals/{{.ID}}" hx-target="#goal-{{.ID}}" hx-swap="outerHTML">Cancel</button>
 	</form>

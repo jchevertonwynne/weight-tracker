@@ -33,8 +33,10 @@ func buildMarkerRows(markers []db.Marker) []MarkerRow {
 }
 
 // MarkerPoint is a marker clipped to the chart's visible x-range, ready for
-// JSON serialization.
+// JSON serialization. ID is included so the client can pick a stable color
+// per marker (stable across range changes, unlike a position-based index).
 type MarkerPoint struct {
+	ID   int64  `json:"id"`
 	X    int64  `json:"x"`
 	Date string `json:"date"`
 	Note string `json:"note"`
@@ -56,6 +58,7 @@ func visibleMarkers(markers []db.Marker, from, until time.Time) []MarkerPoint {
 			continue
 		}
 		out = append(out, MarkerPoint{
+			ID:   m.ID,
 			X:    msOf(m.Date),
 			Date: formatDateLabel(m.Date),
 			Note: m.Note,

@@ -2,34 +2,38 @@
 <section class="card" id="trend-card">
 	<h2>Trend</h2>
 	<form id="chart-controls" class="chart-controls">
-		<label class="field">
-			<span>Range</span>
-			<select name="range">
-				<option value="7">Last 7 days</option>
-				<option value="30" selected>Last 30 days</option>
-				<option value="90">Last 90 days</option>
-				<option value="365">Last year</option>
-				<option value="all">All time</option>
-			</select>
-		</label>
-		<label class="field">
-			<span>Series</span>
-			<select name="series">
-				<option value="all" selected>All weigh-ins</option>
-				<option value="morning">Morning only</option>
-				<option value="evening">Evening only</option>
-				<option value="morning-delta">Morning deltas</option>
-				<option value="evening-delta">Evening deltas</option>
-			</select>
-		</label>
-		<label class="field field-checkbox">
-			<input type="checkbox" name="show-raw" checked>
-			<span>Show raw data</span>
-		</label>
-		<label class="field field-checkbox">
-			<input type="checkbox" name="show-trend" checked>
-			<span>Show trend line</span>
-		</label>
+		<div class="chart-controls-row">
+			<label class="field">
+				<span>Range</span>
+				<select name="range">
+					<option value="7">Last 7 days</option>
+					<option value="30" selected>Last 30 days</option>
+					<option value="90">Last 90 days</option>
+					<option value="365">Last year</option>
+					<option value="all">All time</option>
+				</select>
+			</label>
+			<label class="field">
+				<span>Series</span>
+				<select name="series">
+					<option value="all" selected>All weigh-ins</option>
+					<option value="morning">Morning only</option>
+					<option value="evening">Evening only</option>
+					<option value="morning-delta">Morning deltas</option>
+					<option value="evening-delta">Evening deltas</option>
+				</select>
+			</label>
+		</div>
+		<div class="chart-controls-row">
+			<label class="field field-checkbox">
+				<input type="checkbox" name="show-raw" checked>
+				<span>Show raw data</span>
+			</label>
+			<label class="field field-checkbox">
+				<input type="checkbox" name="show-trend" checked>
+				<span>Show trend line</span>
+			</label>
+		</div>
 	</form>
 	<canvas id="weight-chart"></canvas>
 	<p class="empty" id="chart-empty" hidden></p>

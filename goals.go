@@ -17,7 +17,6 @@ type GoalRow struct {
 	WeightKgStr        string
 	EffectiveFromLabel string
 	EffectiveFromDate  string // for the edit form's date input
-	EffectiveFromTime  string // for the edit form's time input
 	Current            bool
 }
 
@@ -32,9 +31,8 @@ func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
 			ID:                 g.ID,
 			WeightKgRaw:        fmt.Sprintf("%g", g.WeightKg),
 			WeightKgStr:        fmt.Sprintf("%.1f", g.WeightKg),
-			EffectiveFromLabel: g.EffectiveFrom.Format("Jan 2, 2006 15:04"),
+			EffectiveFromLabel: g.EffectiveFrom.Format("Jan 2, 2006"),
 			EffectiveFromDate:  g.EffectiveFrom.Format("2006-01-02"),
-			EffectiveFromTime:  g.EffectiveFrom.Format("15:04"),
 		}
 		if !foundCurrent && !g.EffectiveFrom.After(now) {
 			row.Current = true
@@ -120,7 +118,7 @@ func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid weight_kg", http.StatusBadRequest)
 		return
 	}
-	effectiveFrom, err := parseDateTimeFields(r, "effective_from")
+	effectiveFrom, err := parseDateField(r, "effective_from")
 	if err != nil {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
@@ -182,7 +180,7 @@ func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid weight_kg", http.StatusBadRequest)
 		return
 	}
-	effectiveFrom, err := parseDateTimeFields(r, "effective_from")
+	effectiveFrom, err := parseDateField(r, "effective_from")
 	if err != nil {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
