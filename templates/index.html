@@ -1,0 +1,63 @@
+{{define "index"}}<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>Weight Tracker</title>
+	<link rel="stylesheet" href="/static/style.css">
+	<link rel="manifest" href="/static/manifest.json">
+	<meta name="theme-color" content="#00695c">
+	<meta name="apple-mobile-web-app-capable" content="yes">
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+	<meta name="apple-mobile-web-app-title" content="Weight">
+	<link rel="apple-touch-icon" href="/static/icon-180.png">
+	<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+	<header class="app-bar">
+		<span class="app-bar-title">Weight Tracker</span>
+	</header>
+	<main class="container">
+		<div class="tab-panel" id="tab-log">
+			<section class="card">
+				<h2>Weekly summary</h2>
+				<div hx-get="/summary" hx-trigger="entries-changed from:body" hx-swap="innerHTML">
+					{{template "summary" .Summary}}
+				</div>
+			</section>
+			{{template "trend-card" .}}
+			{{template "markers-form-card" .}}
+			{{template "markers-list" .}}
+			{{template "goal-form-card" .}}
+			{{template "goals-list" .}}
+		</div>
+
+		<div class="tab-panel" id="tab-history" hidden>
+			{{template "entries-list" .}}
+		</div>
+
+		{{template "settings-tab" .}}
+	</main>
+
+	{{template "log-dialog" .}}
+
+	<button type="button" class="fab" id="log-fab" aria-label="Log a weigh-in">+</button>
+
+	<nav class="tab-bar">
+		<button type="button" class="tab-btn active" data-tab="log">
+			<span class="tab-icon">📝</span><span>Log</span>
+		</button>
+		<button type="button" class="tab-btn" data-tab="history">
+			<span class="tab-icon">📋</span><span>History</span>
+		</button>
+		<button type="button" class="tab-btn" data-tab="settings">
+			<span class="tab-icon">⚙</span><span>Settings</span>
+		</button>
+	</nav>
+
+	<script src="/static/chart.min.js"></script>
+	<script src="/static/chart-app.js"></script>
+	<script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

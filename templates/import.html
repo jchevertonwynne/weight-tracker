@@ -1,0 +1,36 @@
+{{define "import"}}<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Import — Weight Tracker</title>
+	<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+	<header class="app-bar">
+		<span class="app-bar-title">Weight Tracker</span>
+	</header>
+	<main class="container">
+		<section class="card">
+			<h2>Import CSV</h2>
+			<form method="post" action="/import" enctype="multipart/form-data" class="entry-form">
+				<label class="field">
+					<span>CSV file</span>
+					<input type="file" name="file" accept=".csv" required>
+				</label>
+				<label class="field">
+					<span>Weight unit in file (ignored if the file's own header names its unit, e.g. "weight grams")</span>
+					<select name="unit">
+						<option value="kg">kg</option>
+						<option value="lb">lb</option>
+						<option value="g">grams</option>
+					</select>
+				</label>
+				<button type="submit" class="btn btn-primary">Import</button>
+			</form>
+			<p><a class="btn-text" href="/">Back</a></p>
+		</section>
+	</main>
+</body>
+</html>
+{{end}}

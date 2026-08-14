@@ -1,0 +1,22 @@
+{{define "settings-tab"}}
+<div class="tab-panel" id="tab-settings" hidden>
+	<section class="card">
+		<h2>Data</h2>
+		<div class="data-actions">
+			<a class="btn-text" href="/export.csv">Export CSV</a>
+			<a class="btn-text" href="/import">Import CSV</a>
+		</div>
+	</section>
+	<section class="card">
+		<h2>Danger zone</h2>
+		<p class="empty">Permanently deletes all entries and goals. This cannot be undone.</p>
+		<form method="post" action="/settings/delete-all" class="entry-form">
+			<label class="field">
+				<span>Type DELETE to confirm</span>
+				<input type="text" id="confirm-delete-input" autocomplete="off">
+			</label>
+			<button type="submit" class="btn btn-danger" id="confirm-delete-btn" disabled>Delete all data</button>
+		</form>
+	</section>
+</div>
+{{end}}

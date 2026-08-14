@@ -1,0 +1,24 @@
+{{define "summary"}}
+{{if .Empty}}
+	<p class="empty">{{.Empty}}</p>
+{{else}}
+	<div class="summary-stats">
+		<div class="stat-tile">
+			<span class="stat-label">This week (morning avg)</span>
+			<span class="stat-value">{{.ThisWeekAvg}}</span>
+		</div>
+		{{if .HasComparison}}
+			<div class="stat-tile">
+				<span class="stat-label">Last week</span>
+				<span class="stat-value">{{.LastWeekAvg}}</span>
+			</div>
+			<div class="stat-tile">
+				<span class="stat-label">Change</span>
+				<span class="chip {{if .DeltaIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Delta}}</span>
+			</div>
+		{{else}}
+			<p class="empty">Not enough data from last week yet for a comparison.</p>
+		{{end}}
+	</div>
+{{end}}
+{{end}}

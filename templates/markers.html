@@ -1,0 +1,57 @@
+{{define "markers-form-card"}}
+<section class="card">
+	<h2>Markers</h2>
+	<form id="marker-form" class="entry-form"
+		hx-post="/markers"
+		hx-target="#markers-list"
+		hx-swap="outerHTML"
+		hx-on::after-request="if(event.detail.successful) this.reset()">
+		<label class="field">
+			<span>Date</span>
+			<input type="date" name="date" value="{{.NowDate}}" required>
+		</label>
+		<label class="field">
+			<span>Note</span>
+			<input type="text" name="note" placeholder="e.g. started new diet" required>
+		</label>
+		<button type="submit" class="btn btn-primary">Add marker</button>
+	</form>
+</section>
+{{end}}
+
+{{define "markers-list"}}
+<section class="card" id="markers-list">
+	<h2>Marker history</h2>
+	{{if not .Markers}}
+		<p class="empty">No markers yet.</p>
+	{{else}}
+		<div class="entries">
+			{{range .Markers}}{{template "marker-row" .}}{{end}}
+		</div>
+	{{end}}
+</section>
+{{end}}
+
+{{define "marker-row"}}
+<div class="entry-row" id="marker-{{.ID}}">
+	<div class="entry-main">
+		<span class="entry-date">{{.DateLabel}}</span>
+		<span class="entry-weight">{{.Note}}</span>
+	</div>
+	<div class="entry-actions">
+		<button class="btn-text" hx-get="/markers/{{.ID}}/edit" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Edit</button>
+		<button class="btn-text btn-danger" hx-delete="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML" hx-confirm="Delete this marker?">Delete</button>
+	</div>
+</div>
+{{end}}
+
+{{define "marker-row-edit"}}
+<div class="entry-row entry-row-editing" id="marker-{{.ID}}">
+	<form class="edit-form" hx-put="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML">
+		<input type="date" name="date" value="{{.DateInput}}" required>
+		<input type="text" name="note" value="{{.Note}}" required>
+		<button type="submit" class="btn btn-primary btn-small">Save</button>
+		<button type="button" class="btn-text btn-small" hx-get="/markers/{{.ID}}" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Cancel</button>
+	</form>
+</div>
+{{end}}

@@ -1,0 +1,63 @@
+{{define "goal-form-card"}}
+<section class="card">
+	<h2>Set goal weight</h2>
+	<form id="goal-form" class="entry-form"
+		hx-post="/goals"
+		hx-target="#goals-list"
+		hx-swap="outerHTML"
+		hx-on::after-request="if(event.detail.successful) this.reset()">
+		<label class="field">
+			<span>Goal weight (kg)</span>
+			<input type="number" step="0.1" min="0" name="weight_kg" required>
+		</label>
+		<label class="field">
+			<span>Effective date</span>
+			<input type="date" name="effective_from_date" value="{{.NowDate}}" required>
+		</label>
+		<label class="field">
+			<span>Effective time</span>
+			<input type="time" name="effective_from_time" value="{{.NowTime}}" required>
+		</label>
+		<button type="submit" class="btn btn-primary">Set goal</button>
+	</form>
+</section>
+{{end}}
+
+{{define "goals-list"}}
+<section class="card" id="goals-list">
+	<h2>Goal history</h2>
+	{{if not .Goals}}
+		<p class="empty">No goal set yet.</p>
+	{{else}}
+		<div class="entries">
+			{{range .Goals}}{{template "goal-row" .}}{{end}}
+		</div>
+	{{end}}
+</section>
+{{end}}
+
+{{define "goal-row"}}
+<div class="entry-row" id="goal-{{.ID}}">
+	<div class="entry-main">
+		{{if .Current}}<span class="chip chip-goal-current">Current</span>{{end}}
+		<span class="entry-weight">{{.WeightKgStr}} kg</span>
+		<span class="entry-date">from {{.EffectiveFromLabel}}</span>
+	</div>
+	<div class="entry-actions">
+		<button class="btn-text" hx-get="/goals/{{.ID}}/edit" hx-target="#goal-{{.ID}}" hx-swap="outerHTML">Edit</button>
+		<button class="btn-text btn-danger" hx-delete="/goals/{{.ID}}" hx-target="#goals-list" hx-swap="outerHTML" hx-confirm="Delete this goal?">Delete</button>
+	</div>
+</div>
+{{end}}
+
+{{define "goal-row-edit"}}
+<div class="entry-row entry-row-editing" id="goal-{{.ID}}">
+	<form class="edit-form" hx-put="/goals/{{.ID}}" hx-target="#goals-list" hx-swap="outerHTML">
+		<input type="number" step="0.1" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
+		<input type="date" name="effective_from_date" value="{{.EffectiveFromDate}}" required>
+		<input type="time" name="effective_from_time" value="{{.EffectiveFromTime}}" required>
+		<button type="submit" class="btn btn-primary btn-small">Save</button>
+		<button type="button" class="btn-text btn-small" hx-get="/goals/{{.ID}}" hx-target="#goal-{{.ID}}" hx-swap="outerHTML">Cancel</button>
+	</form>
+</div>
+{{end}}

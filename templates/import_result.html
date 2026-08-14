@@ -1,0 +1,30 @@
+{{define "import-result"}}<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Import result — Weight Tracker</title>
+	<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+	<header class="app-bar">
+		<span class="app-bar-title">Weight Tracker</span>
+	</header>
+	<main class="container">
+		<section class="card">
+			<h2>Import result</h2>
+			<p>Imported {{.Inserted}} entries.</p>
+			{{if .Duplicates}}<p>Skipped {{.Duplicates}} already-imported duplicates.</p>{{end}}
+			{{if .Invalid}}
+				<p>{{.Invalid}} rows could not be parsed:</p>
+				<ul>
+					{{range .Errors}}<li>line {{.LineNumber}}: {{.Reason}}</li>{{end}}
+				</ul>
+				{{if .Truncated}}<p class="empty">...and {{.Truncated}} more.</p>{{end}}
+			{{end}}
+			<p><a class="btn-text" href="/">Back to Weight Tracker</a></p>
+		</section>
+	</main>
+</body>
+</html>
+{{end}}

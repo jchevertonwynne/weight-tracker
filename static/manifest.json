@@ -1,0 +1,13 @@
+{
+	"name": "Weight Tracker",
+	"short_name": "Weight",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"background_color": "#f2f2f2",
+	"theme_color": "#00695c",
+	"icons": [
+		{ "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+		{ "src": "/static/icon-180.png", "sizes": "180x180", "type": "image/png" }
+	]
+}

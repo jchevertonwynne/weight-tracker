@@ -1,0 +1,72 @@
+{{define "entries-list"}}
+<section class="card" id="entries-list">
+	<h2>History</h2>
+	{{if not .Rows}}
+		<p class="empty">No entries yet.</p>
+	{{else}}
+		<div class="entries">
+			{{range .Rows}}{{template "row" .}}{{end}}
+		</div>
+	{{end}}
+</section>
+{{end}}
+
+{{define "row"}}
+<div class="entry-row" id="entry-{{.ID}}">
+	<div class="entry-main">
+		<span class="chip chip-{{.Period}}">{{.PeriodLabel}}</span>
+		<span class="entry-date">{{.RecordedAtLabel}}</span>
+		<span class="entry-weight">{{.WeightKgStr}} kg</span>
+		{{if .OvernightDelta}}
+			<span class="chip {{if .OvernightLoss}}chip-loss{{else}}chip-gain{{end}}">{{.OvernightDelta}} overnight</span>
+		{{end}}
+		{{if .DailyDelta}}
+			<span class="chip {{if .DailyGain}}chip-gain{{else}}chip-loss{{end}}">{{.DailyDelta}} today</span>
+		{{end}}
+	</div>
+	<div class="entry-actions">
+		<button class="btn-text" hx-get="/entries/{{.ID}}/edit" hx-target="#entry-{{.ID}}" hx-swap="outerHTML">Edit</button>
+		<button class="btn-text btn-danger" hx-delete="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-confirm="Delete this entry?">Delete</button>
+	</div>
+</div>
+{{end}}
+
+{{define "row-edit"}}
+<div class="entry-row entry-row-editing" id="entry-{{.ID}}">
+	<form class="edit-form" hx-put="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML">
+		<input type="number" step="0.1" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
+		<input type="date" name="recorded_at_date" value="{{.RecordedAtDate}}" required>
+		<input type="time" name="recorded_at_time" value="{{.RecordedAtTime}}" required>
+		<button type="submit" class="btn btn-primary btn-small">Save</button>
+		<button type="button" class="btn-text btn-small" hx-get="/entries/{{.ID}}" hx-target="#entry-{{.ID}}" hx-swap="outerHTML">Cancel</button>
+	</form>
+</div>
+{{end}}
+
+{{define "log-dialog"}}
+<dialog id="log-dialog" class="card modal">
+	<h2>Log a weigh-in</h2>
+	<form id="entry-form" class="entry-form"
+		hx-post="/entries"
+		hx-target="#entries-list"
+		hx-swap="outerHTML"
+		hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('log-dialog').close(); }">
+		<label class="field">
+			<span>Weight (kg)</span>
+			<input type="number" step="0.1" min="0" name="weight_kg" required autofocus>
+		</label>
+		<label class="field">
+			<span>Date</span>
+			<input type="date" id="recorded-at-date" name="recorded_at_date" value="{{.NowDate}}" required>
+		</label>
+		<label class="field">
+			<span>Time</span>
+			<input type="time" id="recorded-at-time" name="recorded_at_time" value="{{.NowTime}}" required>
+		</label>
+		<div class="modal-actions">
+			<button type="button" class="btn-text" id="log-cancel">Cancel</button>
+			<button type="submit" class="btn btn-primary">Add entry</button>
+		</div>
+	</form>
+</dialog>
+{{end}}
