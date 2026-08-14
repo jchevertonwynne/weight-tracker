@@ -15,9 +15,17 @@
 	// crowding out its neighbors.
 	const markerLabelMaxWidth = 90;
 	// markerLabelGap is the minimum pixel gap required between two labels'
-	// bounding boxes; anything tighter than this and the later (rightward)
-	// label is skipped rather than overlapping the one before it.
+	// bounding boxes; anything tighter than this and they can't share a row.
 	const markerLabelGap = 4;
+	// markerLabelRowHeight is the vertical spacing between stacked label
+	// rows (see markerLabelRows below).
+	const markerLabelRowHeight = 12;
+	// markerLabelRows bounds how many labels can stack vertically when their
+	// dates are too close together to sit on one row — e.g. two markers 9
+	// days apart on a 90-day view. A marker that doesn't fit in any row
+	// still gets its line drawn and stays reachable via tap; it just goes
+	// without an inline label.
+	const markerLabelRows = 2;
 
 	// truncateToWidth shortens text with a trailing ellipsis until it fits
 	// within maxWidth for the canvas context's current font, via binary
@@ -41,10 +49,11 @@
 	// markerLinesPlugin draws a dashed vertical line for each marker date,
 	// spanning the full plot height, plus a short truncated label above the
 	// plot area (in the top layout padding reserved for it) so markers are
-	// readable at a glance rather than only on tap. Labels are drawn
-	// left-to-right and skipped if they'd overlap the previous one —
-	// skipped/truncated notes are still readable via tap, using the pixel
-	// positions recorded in chart.$markerPositions.
+	// readable at a glance rather than only on tap. Labels are placed
+	// left-to-right, stacking onto a further-up row (see markerLabelRows)
+	// when they'd otherwise overlap a label already on the current row;
+	// anything that doesn't fit any row is still readable via tap, using
+	// the pixel positions recorded in chart.$markerPositions.
 	const markerLinesPlugin = {
 		id: 'markerLines',
 		afterDatasetsDraw(chartInstance) {
@@ -73,8 +82,11 @@
 			ctx.fillStyle = cssVar('--marker');
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'bottom';
-			const labelY = chartArea.top - 6;
-			let rightEdge = -Infinity;
+			// Each row tracks the right edge of the last label placed on it;
+			// a label goes on the first row it doesn't overlap, so two
+			// close-together markers still both get a legible label instead
+			// of the second one silently disappearing.
+			const rowRightEdge = new Array(markerLabelRows).fill(-Infinity);
 			positioned
 				.slice()
 				.sort((a, b) => a.x - b.x)
@@ -83,9 +95,10 @@
 					if (!label) return;
 					const width = ctx.measureText(label).width;
 					const left = m.x - width / 2;
-					if (left < rightEdge + markerLabelGap) return;
-					ctx.fillText(label, m.x, labelY);
-					rightEdge = m.x + width / 2;
+					const row = rowRightEdge.findIndex((edge) => left >= edge + markerLabelGap);
+					if (row === -1) return;
+					ctx.fillText(label, m.x, chartArea.top - 6 - row * markerLabelRowHeight);
+					rowRightEdge[row] = m.x + width / 2;
 				});
 			ctx.restore();
 		},
@@ -198,8 +211,9 @@
 				animation: false,
 				interaction: { mode: 'nearest', intersect: false, axis: 'x' },
 				// Reserves room above the plot area for markerLinesPlugin's
-				// labels, so they never overlap the topmost data points.
-				layout: { padding: { top: 18 } },
+				// (possibly stacked, see markerLabelRows) labels, so they
+				// never overlap the topmost data points.
+				layout: { padding: { top: 18 + (markerLabelRows - 1) * markerLabelRowHeight } },
 				scales: {
 					x: {
 						type: 'linear',
