@@ -16,10 +16,11 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS entries (
-	id          INTEGER PRIMARY KEY AUTOINCREMENT,
-	recorded_at TEXT    NOT NULL, -- when the weigh-in happened, RFC3339
-	weight_kg   REAL    NOT NULL,
-	created_at  TEXT    NOT NULL  -- when the row was inserted, RFC3339
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	recorded_at     TEXT    NOT NULL, -- when the weigh-in happened, RFC3339
+	weight_kg       REAL    NOT NULL,
+	period_override TEXT,             -- "morning"/"evening"; NULL means auto-detect from recorded_at
+	created_at      TEXT    NOT NULL  -- when the row was inserted, RFC3339
 );
 CREATE INDEX IF NOT EXISTS idx_entries_recorded_at ON entries (recorded_at);
 
@@ -53,12 +54,55 @@ func Open(path string) (*sql.DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := addPeriodOverrideColumn(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("migrate period_override column: %w", err)
+	}
 	return sqlDB, nil
 }
 
-// DetectPeriod applies the morning/evening noon-split rule to a clock time.
+// addPeriodOverrideColumn adds entries.period_override for databases created
+// before this column existed — a no-op if it's already there, which it
+// always is for a database created fresh by the schema above. SQLite's
+// ALTER TABLE ADD COLUMN has no "IF NOT EXISTS" form, so presence is
+// checked first via PRAGMA table_info.
+func addPeriodOverrideColumn(sqlDB *sql.DB) error {
+	rows, err := sqlDB.Query(`PRAGMA table_info(entries)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, ctype string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "period_override" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close() // must close before the ALTER below — SetMaxOpenConns(1) means it'd otherwise deadlock waiting for this same connection
+
+	if found {
+		return nil
+	}
+	_, err = sqlDB.Exec(`ALTER TABLE entries ADD COLUMN period_override TEXT`)
+	return err
+}
+
+// DetectPeriod applies the morning/evening split rule to a clock time: a
+// weigh-in from midnight to 4am is treated as a continuation of the
+// previous evening (late-night, not a fresh morning), so "morning" only
+// starts at 4am.
 func DetectPeriod(t time.Time) string {
-	if t.Hour() < 12 {
+	if h := t.Hour(); h >= 4 && h < 12 {
 		return "morning"
 	}
 	return "evening"

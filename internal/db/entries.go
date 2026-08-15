@@ -10,13 +10,28 @@ type Entry struct {
 	ID         int64
 	RecordedAt time.Time
 	WeightKg   float64
-	CreatedAt  time.Time
+	// PeriodOverride is "" (auto-detect from RecordedAt via DetectPeriod),
+	// "morning", or "evening" — set when the user manually overrides the
+	// period detected for a weigh-in logged close to the morning/evening
+	// boundary.
+	PeriodOverride string
+	CreatedAt      time.Time
 }
 
-func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightKg float64, createdAt time.Time) (int64, error) {
+// nullIfEmpty converts "" to a SQL NULL — period_override is a nullable
+// column, and an empty string means "no override", not the literal string
+// "".
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightKg float64, periodOverride string, createdAt time.Time) (int64, error) {
 	res, err := sqlDB.Exec(
-		`INSERT INTO entries (recorded_at, weight_kg, created_at) VALUES (?, ?, ?)`,
-		recordedAt.UTC().Format(time.RFC3339), weightKg, createdAt.UTC().Format(time.RFC3339),
+		`INSERT INTO entries (recorded_at, weight_kg, period_override, created_at) VALUES (?, ?, ?, ?)`,
+		recordedAt.UTC().Format(time.RFC3339), weightKg, nullIfEmpty(periodOverride), createdAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert entry: %w", err)
@@ -24,10 +39,10 @@ func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightKg float64, createdA
 	return res.LastInsertId()
 }
 
-func UpdateEntry(sqlDB *sql.DB, id int64, recordedAt time.Time, weightKg float64) error {
+func UpdateEntry(sqlDB *sql.DB, id int64, recordedAt time.Time, weightKg float64, periodOverride string) error {
 	_, err := sqlDB.Exec(
-		`UPDATE entries SET recorded_at = ?, weight_kg = ? WHERE id = ?`,
-		recordedAt.UTC().Format(time.RFC3339), weightKg, id,
+		`UPDATE entries SET recorded_at = ?, weight_kg = ?, period_override = ? WHERE id = ?`,
+		recordedAt.UTC().Format(time.RFC3339), weightKg, nullIfEmpty(periodOverride), id,
 	)
 	if err != nil {
 		return fmt.Errorf("update entry %d: %w", id, err)
@@ -46,8 +61,8 @@ func GetEntry(sqlDB *sql.DB, id int64) (Entry, error) {
 	var e Entry
 	var recordedAt, createdAt string
 	err := sqlDB.QueryRow(
-		`SELECT id, recorded_at, weight_kg, created_at FROM entries WHERE id = ?`, id,
-	).Scan(&e.ID, &recordedAt, &e.WeightKg, &createdAt)
+		`SELECT id, recorded_at, weight_kg, COALESCE(period_override, ''), created_at FROM entries WHERE id = ?`, id,
+	).Scan(&e.ID, &recordedAt, &e.WeightKg, &e.PeriodOverride, &createdAt)
 	if err != nil {
 		return Entry{}, fmt.Errorf("get entry %d: %w", id, err)
 	}
@@ -63,7 +78,7 @@ func GetEntry(sqlDB *sql.DB, id int64) (Entry, error) {
 // ListEntries returns every entry newest-first.
 func ListEntries(sqlDB *sql.DB) ([]Entry, error) {
 	rows, err := sqlDB.Query(
-		`SELECT id, recorded_at, weight_kg, created_at FROM entries ORDER BY recorded_at DESC`,
+		`SELECT id, recorded_at, weight_kg, COALESCE(period_override, ''), created_at FROM entries ORDER BY recorded_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list entries: %w", err)
@@ -74,7 +89,7 @@ func ListEntries(sqlDB *sql.DB) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var recordedAt, createdAt string
-		if err := rows.Scan(&e.ID, &recordedAt, &e.WeightKg, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &recordedAt, &e.WeightKg, &e.PeriodOverride, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
 		if e.RecordedAt, err = parseStoredTime(recordedAt); err != nil {

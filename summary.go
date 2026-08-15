@@ -27,7 +27,7 @@ func buildWeeklySummary(entries []db.Entry, now time.Time) WeeklySummary {
 
 	var thisWeek, lastWeek []float64
 	for _, e := range entries {
-		if db.DetectPeriod(e.RecordedAt) != "morning" {
+		if entryPeriod(e) != "morning" {
 			continue
 		}
 		switch {

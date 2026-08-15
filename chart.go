@@ -137,7 +137,7 @@ func sequentialDeltas(chrono []db.Entry, period string) map[int64]float64 {
 	var last *db.Entry
 	for i := range chrono {
 		e := &chrono[i]
-		if db.DetectPeriod(e.RecordedAt) != period {
+		if entryPeriod(*e) != period {
 			continue
 		}
 		if last != nil {
@@ -205,7 +205,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 
 	var pts, trendSourcePts []chartRawPoint
 	for _, e := range chrono {
-		period := db.DetectPeriod(e.RecordedAt)
+		period := entryPeriod(e)
 		visible := window.contains(e.RecordedAt)
 		switch seriesParam {
 		case "morning", "evening":

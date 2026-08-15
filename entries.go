@@ -10,8 +10,9 @@ import (
 	"weight-tracker/internal/db"
 )
 
-// Row is the display-ready form of a db.Entry. Period is derived from
-// RecordedAt at render time rather than stored, per db.DetectPeriod.
+// Row is the display-ready form of a db.Entry. Period is entryPeriod's
+// result: the user's PeriodOverride if they set one, else auto-detected
+// from RecordedAt at render time via db.DetectPeriod.
 type Row struct {
 	ID              int64
 	RecordedAtLabel string
@@ -19,12 +20,28 @@ type Row struct {
 	RecordedAtTime  string // for the edit form's time input
 	Period          string
 	PeriodLabel     string
+	PeriodOverride  string // "", "morning", or "evening" — for the edit form's select
 	WeightKgRaw     string
 	WeightKgStr     string
 	OvernightDelta  string // set on morning entries: vs. the prior evening
 	OvernightLoss   bool
 	DailyDelta      string // set on evening entries: vs. that same day's morning
 	DailyGain       bool
+}
+
+// entryPeriod returns e's effective period: PeriodOverride if the user set
+// one, otherwise auto-detected from RecordedAt via db.DetectPeriod.
+func entryPeriod(e db.Entry) string {
+	if e.PeriodOverride != "" {
+		return e.PeriodOverride
+	}
+	return db.DetectPeriod(e.RecordedAt)
+}
+
+// validPeriodOverride reports whether s is a legal period_override value:
+// "" (auto), "morning", or "evening".
+func validPeriodOverride(s string) bool {
+	return s == "" || s == "morning" || s == "evening"
 }
 
 // chronologicalWithDeltas orders entries by RecordedAt and, keyed by entry
@@ -48,7 +65,7 @@ func chronologicalWithDeltas(entries []db.Entry) (chrono []db.Entry, overnight, 
 	var lastMorning, lastEvening *db.Entry
 	for i := range chrono {
 		e := &chrono[i]
-		switch db.DetectPeriod(e.RecordedAt) {
+		switch entryPeriod(*e) {
 		case "morning":
 			if lastEvening != nil && isNextCalendarDay(lastEvening.RecordedAt, e.RecordedAt) {
 				overnight[e.ID] = e.WeightKg - lastEvening.WeightKg
@@ -81,13 +98,14 @@ func buildRows(entries []db.Entry) []Row {
 
 	rows := make([]Row, len(entries))
 	for i, e := range entries {
-		period := db.DetectPeriod(e.RecordedAt)
+		period := entryPeriod(e)
 		r := Row{
 			ID:              e.ID,
 			RecordedAtLabel: e.RecordedAt.Format("Jan 2, 2006 15:04"),
 			RecordedAtDate:  e.RecordedAt.Format("2006-01-02"),
 			RecordedAtTime:  e.RecordedAt.Format("15:04"),
 			Period:          period,
+			PeriodOverride:  e.PeriodOverride,
 			WeightKgRaw:     fmt.Sprintf("%g", e.WeightKg),
 			WeightKgStr:     fmt.Sprintf("%.1f", e.WeightKg),
 		}
@@ -141,7 +159,12 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid recorded_at", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateEntry(s.db, recordedAt, weightKg, time.Now()); err != nil {
+	periodOverride := r.FormValue("period_override")
+	if !validPeriodOverride(periodOverride) {
+		http.Error(w, "invalid period_override", http.StatusBadRequest)
+		return
+	}
+	if _, err := db.CreateEntry(s.db, recordedAt, weightKg, periodOverride, time.Now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -203,7 +226,12 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid recorded_at", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateEntry(s.db, id, recordedAt, weightKg); err != nil {
+	periodOverride := r.FormValue("period_override")
+	if !validPeriodOverride(periodOverride) {
+		http.Error(w, "invalid period_override", http.StatusBadRequest)
+		return
+	}
+	if err := db.UpdateEntry(s.db, id, recordedAt, weightKg, periodOverride); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
