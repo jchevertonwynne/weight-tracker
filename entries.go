@@ -48,11 +48,17 @@ func validPeriodOverride(s string) bool {
 // ID, computes two deltas:
 //   - overnight: a morning entry's weight vs. the most recent evening entry
 //     seen so far, but only if that evening entry was actually the
-//     preceding calendar day — otherwise there's a gap (e.g. no evening
+//     preceding logical day — otherwise there's a gap (e.g. no evening
 //     logged in between) and the two readings aren't really "overnight"
 //     from each other, so no delta is shown.
 //   - daily: an evening entry's weight vs. the most recent morning entry
-//     seen so far on that SAME calendar day, i.e. same-day weight gained.
+//     seen so far on that SAME logical day, i.e. same-day weight gained.
+//
+// "Logical day" (see logicalDate) rather than literal calendar date, since
+// db.DetectPeriod's morning cutoff is 4am, not midnight: a 1:25am reading
+// is labeled "evening" but shares its literal calendar date with the
+// morning reading that follows it a few hours later — comparing literal
+// dates would miss that pairing entirely.
 func chronologicalWithDeltas(entries []db.Entry) (chrono []db.Entry, overnight, daily map[int64]float64) {
 	chrono = make([]db.Entry, len(entries))
 	copy(chrono, entries)
@@ -81,16 +87,29 @@ func chronologicalWithDeltas(entries []db.Entry) (chrono []db.Entry, overnight, 
 	return chrono, overnight, daily
 }
 
-func sameDate(a, b time.Time) bool {
-	return a.Format("2006-01-02") == b.Format("2006-01-02")
+// logicalDate returns the calendar date t counts as belonging to for
+// same-day/next-day comparisons, using the same 4am boundary as
+// db.DetectPeriod's morning cutoff: a time before 4am is attributed to the
+// previous calendar date, since it's still "last night" rather than the
+// start of a new day.
+func logicalDate(t time.Time) time.Time {
+	if t.Hour() < 4 {
+		t = t.AddDate(0, 0, -1)
+	}
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
-// isNextCalendarDay reports whether b falls on the calendar day immediately
+func sameDate(a, b time.Time) bool {
+	return logicalDate(a).Equal(logicalDate(b))
+}
+
+// isNextCalendarDay reports whether b falls on the logical day immediately
 // after a — used to require a genuine "yesterday evening to this morning"
 // adjacency for the overnight delta, rather than comparing against
 // whatever evening entry happens to be most recent regardless of gap size.
 func isNextCalendarDay(a, b time.Time) bool {
-	return a.AddDate(0, 0, 1).Format("2006-01-02") == b.Format("2006-01-02")
+	return logicalDate(a).AddDate(0, 0, 1).Equal(logicalDate(b))
 }
 
 func buildRows(entries []db.Entry) []Row {
