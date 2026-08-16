@@ -25,33 +25,42 @@
 	{{if not .Markers}}
 		<p class="empty">No markers yet.</p>
 	{{else}}
-		<div class="entries">
-			{{range .Markers}}{{template "marker-row" .}}{{end}}
-		</div>
+		<table class="entry-table">
+			<thead>
+				<tr>
+					<th scope="col">Date</th>
+					<th scope="col">Note</th>
+					<th scope="col"><span class="visually-hidden">Actions</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				{{range .Markers}}{{template "marker-row" .}}{{end}}
+			</tbody>
+		</table>
 	{{end}}
 </section>
 {{end}}
 
 {{define "marker-row"}}
-<div class="entry-row" id="marker-{{.ID}}">
-	<div class="entry-main">
-		<span class="entry-date">{{.DateLabel}}</span>
-		<span class="entry-weight">{{.Note}}</span>
-	</div>
-	<div class="entry-actions">
+<tr id="marker-{{.ID}}">
+	<td class="entry-date">{{.DateLabel}}</td>
+	<td class="entry-note">{{.Note}}</td>
+	<td class="entry-actions">
 		<button class="btn-text" hx-get="/markers/{{.ID}}/edit" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Edit</button>
 		<button class="btn-text btn-danger" hx-delete="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML" hx-confirm="Delete this marker?">Delete</button>
-	</div>
-</div>
+	</td>
+</tr>
 {{end}}
 
 {{define "marker-row-edit"}}
-<div class="entry-row entry-row-editing" id="marker-{{.ID}}">
-	<form class="edit-form" hx-put="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML">
-		<input type="date" name="date" value="{{.DateInput}}" required>
-		<input type="text" name="note" value="{{.Note}}" autocomplete="off" required>
-		<button type="submit" class="btn btn-primary btn-small">Save</button>
-		<button type="button" class="btn-text btn-small" hx-get="/markers/{{.ID}}" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Cancel</button>
-	</form>
-</div>
+<tr class="entry-row-editing" id="marker-{{.ID}}">
+	<td colspan="3">
+		<form class="edit-form" hx-put="/markers/{{.ID}}" hx-target="#markers-list" hx-swap="outerHTML">
+			<input type="date" name="date" value="{{.DateInput}}" required>
+			<input type="text" name="note" value="{{.Note}}" autocomplete="off" required>
+			<button type="submit" class="btn btn-primary btn-small">Save</button>
+			<button type="button" class="btn-text btn-small" hx-get="/markers/{{.ID}}" hx-target="#marker-{{.ID}}" hx-swap="outerHTML">Cancel</button>
+		</form>
+	</td>
+</tr>
 {{end}}

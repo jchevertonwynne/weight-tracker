@@ -357,6 +357,62 @@ select:focus {
 	margin-left: auto;
 }
 
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+.entry-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.entry-table th {
+	padding: 0 0 0.5rem;
+	text-align: left;
+	font-size: 0.75rem;
+	font-weight: 500;
+	color: var(--on-surface-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	border-bottom: 1px solid var(--row-border);
+}
+
+.entry-table td {
+	padding: 0.75rem 0.6rem 0.75rem 0;
+	border-bottom: 1px solid var(--row-border);
+	vertical-align: middle;
+}
+
+.entry-table tr:last-child td {
+	border-bottom: none;
+}
+
+.entry-table .entry-date {
+	white-space: nowrap;
+}
+
+.entry-table .entry-note {
+	width: 100%;
+}
+
+.entry-table .entry-actions {
+	display: table-cell;
+	padding-right: 0;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.entry-table .entry-row-editing td {
+	padding-right: 0;
+}
+
 .chart-controls {
 	display: flex;
 	flex-direction: column;
