@@ -8,7 +8,7 @@ import (
 
 func goal(id int64, weightKg float64, effectiveFrom string, t *testing.T) db.Goal {
 	t.Helper()
-	return db.Goal{ID: id, WeightKg: weightKg, EffectiveFrom: at(t, effectiveFrom+" 00:00")}
+	return db.Goal{ID: id, WeightG: db.KgToGrams(weightKg), EffectiveFrom: at(t, effectiveFrom+" 00:00")}
 }
 
 func TestBuildGoalRows(t *testing.T) {
@@ -81,8 +81,8 @@ func TestBuildGoalSegments(t *testing.T) {
 		if len(segs) != 3 {
 			t.Fatalf("got %d segments, want 3", len(segs))
 		}
-		if segs[0].WeightKg != 80 {
-			t.Errorf("first segment = %v kg, want the earliest goal (80)", segs[0].WeightKg)
+		if segs[0].WeightG != 80000 {
+			t.Errorf("first segment = %v g, want the earliest goal (80000)", segs[0].WeightG)
 		}
 		if !segs[0].Until.Equal(segs[1].From) {
 			t.Error("segments are not contiguous: segment 0 does not end where segment 1 begins")
@@ -132,8 +132,8 @@ func TestClipGoalSegments(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("got %d segments, want only the 78 kg one", len(got))
 		}
-		if got[0].WeightKg != 78 {
-			t.Errorf("kept the %v kg segment, want 78", got[0].WeightKg)
+		if got[0].WeightG != 78000 {
+			t.Errorf("kept the %v g segment, want 78000", got[0].WeightG)
 		}
 	})
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -58,27 +59,31 @@ func validPeriodOverride(s string) bool {
 // is labeled "evening" but shares its literal calendar date with the
 // morning reading that follows it a few hours later — comparing literal
 // dates would miss that pairing entirely.
-func chronologicalWithDeltas(entries []db.Entry) (chrono []db.Entry, overnight, daily map[int64]float64) {
+//
+// Both deltas are in grams, so they are exact differences of the stored
+// values rather than the accumulated float error two kilogram subtractions
+// used to produce.
+func chronologicalWithDeltas(entries []db.Entry) (chrono []db.Entry, overnight, daily map[int64]int64) {
 	chrono = make([]db.Entry, len(entries))
 	copy(chrono, entries)
 	sort.SliceStable(chrono, func(i, j int) bool {
 		return chrono[i].RecordedAt.Before(chrono[j].RecordedAt)
 	})
 
-	overnight = make(map[int64]float64, len(entries))
-	daily = make(map[int64]float64, len(entries))
+	overnight = make(map[int64]int64, len(entries))
+	daily = make(map[int64]int64, len(entries))
 	var lastMorning, lastEvening *db.Entry
 	for i := range chrono {
 		e := &chrono[i]
 		switch entryPeriod(*e) {
 		case "morning":
 			if lastEvening != nil && isNextCalendarDay(lastEvening.RecordedAt, e.RecordedAt) {
-				overnight[e.ID] = e.WeightKg - lastEvening.WeightKg
+				overnight[e.ID] = e.WeightG - lastEvening.WeightG
 			}
 			lastMorning = e
 		case "evening":
 			if lastMorning != nil && sameDate(lastMorning.RecordedAt, e.RecordedAt) {
-				daily[e.ID] = e.WeightKg - lastMorning.WeightKg
+				daily[e.ID] = e.WeightG - lastMorning.WeightG
 			}
 			lastEvening = e
 		}
@@ -111,6 +116,25 @@ func isNextCalendarDay(a, b time.Time) bool {
 	return logicalDate(a).AddDate(0, 0, 1).Equal(logicalDate(b))
 }
 
+// formatKg renders stored grams as the one-decimal kilogram string shown
+// throughout the UI — the precision a bathroom scale actually reports.
+func formatKg(grams int64) string {
+	return fmt.Sprintf("%.1f", db.GramsToKg(grams))
+}
+
+// formatKgDelta renders a gram difference as a signed kilogram string.
+func formatKgDelta(grams int64) string {
+	return fmt.Sprintf("%+.1f kg", db.GramsToKg(grams))
+}
+
+// formatKgInput renders stored grams for a number input, keeping every
+// digit that was stored (at most three decimals) so re-saving an unedited
+// row cannot silently round it — a display-rounded 82.4 would otherwise
+// overwrite an imported 82.437.
+func formatKgInput(grams int64) string {
+	return strconv.FormatFloat(db.GramsToKg(grams), 'f', -1, 64)
+}
+
 func buildRows(entries []db.Entry) []Row {
 	_, overnightByID, dailyByID := chronologicalWithDeltas(entries)
 
@@ -124,8 +148,8 @@ func buildRows(entries []db.Entry) []Row {
 			RecordedAtTime:  e.RecordedAt.Format("15:04"),
 			Period:          period,
 			PeriodOverride:  e.PeriodOverride,
-			WeightKgRaw:     fmt.Sprintf("%g", e.WeightKg),
-			WeightKgStr:     fmt.Sprintf("%.1f", e.WeightKg),
+			WeightKgRaw:     formatKgInput(e.WeightG),
+			WeightKgStr:     formatKg(e.WeightG),
 		}
 		if period == "morning" {
 			r.PeriodLabel = "Morning"
@@ -134,11 +158,11 @@ func buildRows(entries []db.Entry) []Row {
 		}
 		if delta, ok := overnightByID[e.ID]; ok {
 			r.OvernightLoss = delta < 0
-			r.OvernightDelta = fmt.Sprintf("%+.1f kg", delta)
+			r.OvernightDelta = formatKgDelta(delta)
 		}
 		if delta, ok := dailyByID[e.ID]; ok {
 			r.DailyGain = delta > 0
-			r.DailyDelta = fmt.Sprintf("%+.1f kg", delta)
+			r.DailyDelta = formatKgDelta(delta)
 		}
 		rows[i] = r
 	}
@@ -167,7 +191,7 @@ func (s *server) renderEntriesList(w http.ResponseWriter) {
 }
 
 func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	weightKg, err := parseWeightKg(r)
+	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -182,7 +206,7 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid period_override", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateEntry(s.db, recordedAt, weightKg, periodOverride, time.Now()); err != nil {
+	if _, err := db.CreateEntry(s.db, recordedAt, weightG, periodOverride, time.Now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -234,7 +258,7 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	weightKg, err := parseWeightKg(r)
+	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -249,7 +273,7 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid period_override", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateEntry(s.db, id, recordedAt, weightKg, periodOverride); err != nil {
+	if err := db.UpdateEntry(s.db, id, recordedAt, weightG, periodOverride); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

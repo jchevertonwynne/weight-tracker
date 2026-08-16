@@ -25,27 +25,27 @@ func buildWeeklySummary(entries []db.Entry, now time.Time) WeeklySummary {
 	thisStart := now.AddDate(0, 0, -7)
 	lastStart := now.AddDate(0, 0, -14)
 
-	var thisWeek, lastWeek []float64
+	var thisWeek, lastWeek []int64
 	for _, e := range entries {
 		if entryPeriod(e) != "morning" {
 			continue
 		}
 		switch {
 		case !e.RecordedAt.Before(thisStart) && !e.RecordedAt.After(now):
-			thisWeek = append(thisWeek, e.WeightKg)
+			thisWeek = append(thisWeek, e.WeightG)
 		case !e.RecordedAt.Before(lastStart) && e.RecordedAt.Before(thisStart):
-			lastWeek = append(lastWeek, e.WeightKg)
+			lastWeek = append(lastWeek, e.WeightG)
 		}
 	}
 
 	if len(thisWeek) == 0 {
 		return WeeklySummary{Empty: "Not enough morning weigh-ins this week yet for a trend comparison."}
 	}
-	summary := WeeklySummary{ThisWeekAvg: fmt.Sprintf("%.1f kg", mean(thisWeek))}
+	summary := WeeklySummary{ThisWeekAvg: fmt.Sprintf("%.1f kg", meanKg(thisWeek))}
 	if len(lastWeek) == 0 {
 		return summary
 	}
-	thisAvg, lastAvg := mean(thisWeek), mean(lastWeek)
+	thisAvg, lastAvg := meanKg(thisWeek), meanKg(lastWeek)
 	summary.HasComparison = true
 	summary.LastWeekAvg = fmt.Sprintf("%.1f kg", lastAvg)
 	summary.Delta = fmt.Sprintf("%+.1f kg", thisAvg-lastAvg)
@@ -53,12 +53,15 @@ func buildWeeklySummary(entries []db.Entry, now time.Time) WeeklySummary {
 	return summary
 }
 
-func mean(vals []float64) float64 {
-	var sum float64
-	for _, v := range vals {
-		sum += v
+// meanKg averages gram values and returns kilograms. The sum is taken in
+// integer grams so it is exact however many weigh-ins it covers; only the
+// final division is floating point.
+func meanKg(grams []int64) float64 {
+	var sum int64
+	for _, g := range grams {
+		sum += g
 	}
-	return sum / float64(len(vals))
+	return db.GramsToKg(sum) / float64(len(grams))
 }
 
 func (s *server) handleSummary(w http.ResponseWriter, _ *http.Request) {

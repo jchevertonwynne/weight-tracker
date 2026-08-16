@@ -10,6 +10,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -41,11 +42,19 @@ func deleteByID(sqlDB *sql.DB, table string, id int64) error {
 	return nil
 }
 
+// Weights are stored as whole grams rather than a REAL number of
+// kilograms. A binary float cannot represent most one-decimal kilogram
+// values exactly, so a weight entered as 82.4 came back as
+// 82.400000000000006, and a unit conversion during import (180 lb ->
+// 81.64662660000001 kg) made it worse — visible in the CSV export, which
+// prints the stored value at full precision. Grams are exact, well inside
+// int64, and finer than any scale the app is used with. Kilograms are
+// purely a presentation concern; see GramsToKg.
 const schema = `
 CREATE TABLE IF NOT EXISTS entries (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
 	recorded_at     TEXT    NOT NULL, -- when the weigh-in happened, RFC3339
-	weight_kg       REAL    NOT NULL,
+	weight_g        INTEGER NOT NULL, -- whole grams
 	period_override TEXT,             -- "morning"/"evening"; NULL means auto-detect from recorded_at
 	created_at      TEXT    NOT NULL  -- when the row was inserted, RFC3339
 );
@@ -53,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_entries_recorded_at ON entries (recorded_at);
 
 CREATE TABLE IF NOT EXISTS goals (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
-	weight_kg      REAL    NOT NULL,
+	weight_g       INTEGER NOT NULL, -- whole grams
 	effective_from TEXT    NOT NULL, -- when this goal becomes active, RFC3339
 	created_at     TEXT    NOT NULL  -- when the row was inserted, RFC3339
 );
@@ -81,11 +90,138 @@ func Open(path string) (*sql.DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	// Order matters: the grams migration copies period_override across, so
+	// that column has to exist first on a database old enough to predate it.
 	if err := addPeriodOverrideColumn(sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate period_override column: %w", err)
 	}
+	if err := migrateWeightsToGrams(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("migrate weights to grams: %w", err)
+	}
 	return sqlDB, nil
+}
+
+// KgToGrams converts a kilogram value to whole grams, rounding to the
+// nearest gram. This is the only place a user-supplied or imported weight
+// loses precision, and it loses none that a bathroom scale provides.
+func KgToGrams(kg float64) int64 {
+	return int64(math.Round(kg * 1000))
+}
+
+// GramsToKg converts stored grams back to kilograms, for display and for
+// the float arithmetic (weekly means, the rolling trend) the chart needs.
+func GramsToKg(grams int64) float64 {
+	return float64(grams) / 1000
+}
+
+// weightTableMigrations describes how to rebuild each table that stored
+// weight as REAL kilograms. SQLite cannot change a column's type in place,
+// so the table is recreated in its new shape, copied across with the
+// conversion applied, then swapped in.
+var weightTableMigrations = []struct {
+	name      string
+	createNew string
+	copyRows  string
+	index     string
+}{
+	{
+		name: "entries",
+		createNew: `CREATE TABLE entries_grams_migration (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at     TEXT    NOT NULL,
+			weight_g        INTEGER NOT NULL,
+			period_override TEXT,
+			created_at      TEXT    NOT NULL
+		)`,
+		copyRows: `INSERT INTO entries_grams_migration (id, recorded_at, weight_g, period_override, created_at)
+			SELECT id, recorded_at, CAST(ROUND(weight_kg * 1000) AS INTEGER), period_override, created_at FROM entries`,
+		index: `CREATE INDEX IF NOT EXISTS idx_entries_recorded_at ON entries (recorded_at)`,
+	},
+	{
+		name: "goals",
+		createNew: `CREATE TABLE goals_grams_migration (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			weight_g       INTEGER NOT NULL,
+			effective_from TEXT    NOT NULL,
+			created_at     TEXT    NOT NULL
+		)`,
+		copyRows: `INSERT INTO goals_grams_migration (id, weight_g, effective_from, created_at)
+			SELECT id, CAST(ROUND(weight_kg * 1000) AS INTEGER), effective_from, created_at FROM goals`,
+		index: `CREATE INDEX IF NOT EXISTS idx_goals_effective_from ON goals (effective_from)`,
+	},
+}
+
+// migrateWeightsToGrams converts any table still holding REAL kilograms to
+// whole grams, preserving ids so nothing else in the app has to care that
+// rows were rewritten. It is a no-op once done — presence of the weight_g
+// column is the marker — and each table is rebuilt inside a transaction, so
+// an interrupted run leaves the original table untouched rather than half
+// converted.
+func migrateWeightsToGrams(sqlDB *sql.DB) error {
+	for _, m := range weightTableMigrations {
+		migrated, err := hasColumn(sqlDB, m.name, "weight_g")
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", m.name, err)
+		}
+		if migrated {
+			continue
+		}
+
+		tx, err := sqlDB.Begin()
+		if err != nil {
+			return fmt.Errorf("begin %s migration: %w", m.name, err)
+		}
+		// Dropping the old table takes its indexes with it, so the index is
+		// recreated after the rename rather than carried over.
+		steps := []string{
+			m.createNew,
+			m.copyRows,
+			`DROP TABLE ` + m.name,
+			`ALTER TABLE ` + m.name + `_grams_migration RENAME TO ` + m.name,
+			m.index,
+		}
+		for _, step := range steps {
+			if _, err := tx.Exec(step); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migrate %s: %w", m.name, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit %s migration: %w", m.name, err)
+		}
+	}
+	return nil
+}
+
+// hasColumn reports whether table already has the named column, via
+// PRAGMA table_info — SQLite offers no "IF NOT EXISTS" form for either
+// ALTER TABLE ADD COLUMN or a type change, so every migration here has to
+// check first.
+func hasColumn(sqlDB *sql.DB, table, column string) (bool, error) {
+	// table is never user input — every caller passes a literal — and
+	// PRAGMA cannot be parameterized.
+	rows, err := sqlDB.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	// Must be closed before the caller's next statement: SetMaxOpenConns(1)
+	// means an open cursor would deadlock waiting on this same connection.
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, ctype string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }
 
 // addPeriodOverrideColumn adds entries.period_override for databases created
@@ -94,29 +230,10 @@ func Open(path string) (*sql.DB, error) {
 // ALTER TABLE ADD COLUMN has no "IF NOT EXISTS" form, so presence is
 // checked first via PRAGMA table_info.
 func addPeriodOverrideColumn(sqlDB *sql.DB) error {
-	rows, err := sqlDB.Query(`PRAGMA table_info(entries)`)
+	found, err := hasColumn(sqlDB, "entries", "period_override")
 	if err != nil {
 		return err
 	}
-	found := false
-	for rows.Next() {
-		var cid, notNull, pk int
-		var name, ctype string
-		var dflt any
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		if name == "period_override" {
-			found = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close() // must close before the ALTER below — SetMaxOpenConns(1) means it'd otherwise deadlock waiting for this same connection
-
 	if found {
 		return nil
 	}

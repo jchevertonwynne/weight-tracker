@@ -220,15 +220,15 @@ func TestSequentialDeltas(t *testing.T) {
 			t.Fatalf("got %v, want exactly one delta", got)
 		}
 		// Morning-to-morning across a skipped day still compares.
-		if !nearlyEqual(got[3], -1.0) {
-			t.Errorf("morning delta = %v, want -1.0", got[3])
+		if got[3] != -1000 {
+			t.Errorf("morning delta = %v g, want -1000", got[3])
 		}
 	})
 
 	t.Run("evening series is independent of the morning one", func(t *testing.T) {
 		got := sequentialDeltas(chrono, "evening")
-		if !nearlyEqual(got[4], -0.5) {
-			t.Errorf("evening delta = %v, want -0.5", got[4])
+		if got[4] != -500 {
+			t.Errorf("evening delta = %v g, want -500", got[4])
 		}
 	})
 
@@ -307,7 +307,7 @@ func TestBuildChartData(t *testing.T) {
 	})
 
 	t.Run("goal lines are omitted from delta charts but present on value charts", func(t *testing.T) {
-		goals := []db.Goal{{ID: 1, WeightKg: 80, EffectiveFrom: at(t, "2026-08-01 00:00")}}
+		goals := []db.Goal{{ID: 1, WeightG: 80000, EffectiveFrom: at(t, "2026-08-01 00:00")}}
 		value := buildChartData(entries, goals, nil, "30", "all", "", "", today)
 		if len(value.Goals) == 0 {
 			t.Error("value chart has no goal line, want one")
@@ -392,11 +392,11 @@ func TestBuildChartData(t *testing.T) {
 }
 
 func TestDeltaClass(t *testing.T) {
-	if got := deltaClass(-0.1); got != "loss" {
-		t.Errorf("deltaClass(-0.1) = %q, want loss", got)
+	if got := deltaClass(-100); got != "loss" {
+		t.Errorf("deltaClass(-100g) = %q, want loss", got)
 	}
-	if got := deltaClass(0.1); got != "gain" {
-		t.Errorf("deltaClass(0.1) = %q, want gain", got)
+	if got := deltaClass(100); got != "gain" {
+		t.Errorf("deltaClass(100g) = %q, want gain", got)
 	}
 	if got := deltaClass(0); got != "gain" {
 		t.Errorf("deltaClass(0) = %q, want gain (no change is not a loss)", got)

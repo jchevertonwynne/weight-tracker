@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -27,12 +26,18 @@ func (s *server) handleExport(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 
+	// The header stays weight_kg rather than switching to grams: kilograms
+	// are what the app shows and what a spreadsheet reader expects, the
+	// importer already recognizes this column, and three decimals of a
+	// kilogram represent whole grams exactly, so the round trip back through
+	// import is lossless. Values are now clean (81.647, not the
+	// 81.64662660000001 that REAL storage used to print).
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"recorded_at", "weight_kg"})
 	for _, e := range entries {
 		_ = cw.Write([]string{
 			e.RecordedAt.Format(time.RFC3339),
-			strconv.FormatFloat(e.WeightKg, 'f', -1, 64),
+			formatKgInput(e.WeightG),
 		})
 	}
 	cw.Flush()

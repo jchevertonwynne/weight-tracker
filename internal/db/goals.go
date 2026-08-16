@@ -8,15 +8,15 @@ import (
 
 type Goal struct {
 	ID            int64
-	WeightKg      float64
+	WeightG       int64
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
 }
 
-func CreateGoal(sqlDB *sql.DB, weightKg float64, effectiveFrom time.Time, createdAt time.Time) (int64, error) {
+func CreateGoal(sqlDB *sql.DB, weightG int64, effectiveFrom time.Time, createdAt time.Time) (int64, error) {
 	res, err := sqlDB.Exec(
-		`INSERT INTO goals (weight_kg, effective_from, created_at) VALUES (?, ?, ?)`,
-		weightKg, effectiveFrom.UTC().Format(time.RFC3339), createdAt.UTC().Format(time.RFC3339),
+		`INSERT INTO goals (weight_g, effective_from, created_at) VALUES (?, ?, ?)`,
+		weightG, effectiveFrom.UTC().Format(time.RFC3339), createdAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert goal: %w", err)
@@ -24,10 +24,10 @@ func CreateGoal(sqlDB *sql.DB, weightKg float64, effectiveFrom time.Time, create
 	return res.LastInsertId()
 }
 
-func UpdateGoal(sqlDB *sql.DB, id int64, weightKg float64, effectiveFrom time.Time) error {
+func UpdateGoal(sqlDB *sql.DB, id int64, weightG int64, effectiveFrom time.Time) error {
 	_, err := sqlDB.Exec(
-		`UPDATE goals SET weight_kg = ?, effective_from = ? WHERE id = ?`,
-		weightKg, effectiveFrom.UTC().Format(time.RFC3339), id,
+		`UPDATE goals SET weight_g = ?, effective_from = ? WHERE id = ?`,
+		weightG, effectiveFrom.UTC().Format(time.RFC3339), id,
 	)
 	if err != nil {
 		return fmt.Errorf("update goal %d: %w", id, err)
@@ -43,8 +43,8 @@ func GetGoal(sqlDB *sql.DB, id int64) (Goal, error) {
 	var g Goal
 	var effectiveFrom, createdAt string
 	err := sqlDB.QueryRow(
-		`SELECT id, weight_kg, effective_from, created_at FROM goals WHERE id = ?`, id,
-	).Scan(&g.ID, &g.WeightKg, &effectiveFrom, &createdAt)
+		`SELECT id, weight_g, effective_from, created_at FROM goals WHERE id = ?`, id,
+	).Scan(&g.ID, &g.WeightG, &effectiveFrom, &createdAt)
 	if err != nil {
 		return Goal{}, fmt.Errorf("get goal %d: %w", id, err)
 	}
@@ -60,7 +60,7 @@ func GetGoal(sqlDB *sql.DB, id int64) (Goal, error) {
 // ListGoals returns every goal newest-first.
 func ListGoals(sqlDB *sql.DB) ([]Goal, error) {
 	rows, err := sqlDB.Query(
-		`SELECT id, weight_kg, effective_from, created_at FROM goals ORDER BY effective_from DESC`,
+		`SELECT id, weight_g, effective_from, created_at FROM goals ORDER BY effective_from DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list goals: %w", err)
@@ -71,7 +71,7 @@ func ListGoals(sqlDB *sql.DB) ([]Goal, error) {
 	for rows.Next() {
 		var g Goal
 		var effectiveFrom, createdAt string
-		if err := rows.Scan(&g.ID, &g.WeightKg, &effectiveFrom, &createdAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.WeightG, &effectiveFrom, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan goal: %w", err)
 		}
 		if g.EffectiveFrom, err = parseStoredTime(effectiveFrom); err != nil {

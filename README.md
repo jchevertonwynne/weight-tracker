@@ -6,6 +6,9 @@ A tiny self-hosted weight tracker for morning/evening weigh-ins, built to run on
 - htmx for interactivity, no JS build step
 - Hand-rolled Material-inspired CSS
 - SQLite via `modernc.org/sqlite` (pure Go, no cgo — cross-compiles trivially)
+- Weights are stored as whole grams and displayed in kilograms; a REAL
+  kilogram column could not represent a value like 82.4 exactly, which
+  leaked into the CSV export as `82.400000000000006`
 
 When you log a weight, the time-of-day field defaults to morning (before noon)
 or evening (noon or later) based on the server's clock, but you can change it
@@ -64,3 +67,22 @@ Then:
 sudo systemctl daemon-reload
 sudo systemctl enable --now weight-tracker
 ```
+
+## Upgrading
+
+Schema changes are applied automatically on startup, so upgrading is just
+replacing the binary. Migrations that rewrite a table (the kilogram-to-gram
+conversion) run inside a transaction and are skipped once applied, so
+restarting is safe and repeatable.
+
+They still rewrite your only copy of the data, so take a backup of the
+database file first — the app is stopped at that point anyway:
+
+```sh
+sudo systemctl stop weight-tracker
+cp ~/weight-tracker.db ~/weight-tracker.db.bak
+```
+
+If a migration fails, the app refuses to start rather than serving against a
+half-converted database; check `journalctl -u weight-tracker` and restore the
+backup.

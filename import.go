@@ -45,7 +45,7 @@ func (s *server) handleImport(w http.ResponseWriter, r *http.Request) {
 
 	newEntries := make([]db.NewEntry, len(result.Rows))
 	for i, row := range result.Rows {
-		newEntries[i] = db.NewEntry{RecordedAt: row.RecordedAt, WeightKg: row.WeightKg}
+		newEntries[i] = db.NewEntry{RecordedAt: row.RecordedAt, WeightG: row.WeightG}
 	}
 
 	inserted, err := db.BulkCreateEntries(s.db, newEntries, existing, time.Now())

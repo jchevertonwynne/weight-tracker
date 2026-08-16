@@ -182,26 +182,36 @@ func writeDeleteError(w http.ResponseWriter, err error) {
 // mistyped or unit-confused value.
 const maxWeightKg = 1000
 
-// parseWeightKg reads and validates the weight_kg form field shared by the
-// entry and goal forms. The inputs carry min/step attributes, but those are
-// client-side only — anything posting directly to the API could otherwise
-// store a negative, zero, or non-finite weight, which then flows into the
-// chart, the deltas, and the CSV export. importer.Parse already applies the
-// same positivity rule to bulk-imported rows.
-func parseWeightKg(r *http.Request) (float64, error) {
+// parseWeightG reads and validates the weight_kg form field shared by the
+// entry and goal forms, returning the whole grams the database stores. The
+// form still speaks kilograms because that is what the user reads off the
+// scale; grams are an internal representation (see db.KgToGrams).
+//
+// The inputs carry min/step attributes, but those are client-side only —
+// anything posting directly to the API could otherwise store a negative,
+// zero, or non-finite weight, which then flows into the chart, the deltas,
+// and the CSV export. importer.Parse applies the same positivity rule to
+// bulk-imported rows.
+func parseWeightG(r *http.Request) (int64, error) {
 	weightKg, err := strconv.ParseFloat(r.FormValue("weight_kg"), 64)
 	if err != nil {
 		return 0, fmt.Errorf("weight_kg is not a number: %w", err)
 	}
 	// ParseFloat happily accepts "NaN" and "Inf"; neither survives being
-	// averaged into a trend line.
+	// averaged into a trend line, and neither converts to a sane gram count.
 	if math.IsNaN(weightKg) || math.IsInf(weightKg, 0) {
 		return 0, fmt.Errorf("weight_kg must be a finite number")
 	}
 	if weightKg <= 0 || weightKg > maxWeightKg {
 		return 0, fmt.Errorf("weight_kg must be between 0 and %d, got %g", maxWeightKg, weightKg)
 	}
-	return weightKg, nil
+	// Rounding to the nearest gram can only reach zero from a value below
+	// half a gram, which the range check above has already let through.
+	grams := db.KgToGrams(weightKg)
+	if grams <= 0 {
+		return 0, fmt.Errorf("weight_kg %g rounds to zero grams", weightKg)
+	}
+	return grams, nil
 }
 
 // dateTimeLayout matches the concatenation of an <input type="date"> value

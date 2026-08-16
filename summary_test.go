@@ -119,11 +119,16 @@ func TestBuildWeeklySummary(t *testing.T) {
 	})
 }
 
-func TestMean(t *testing.T) {
-	if got := mean([]float64{80, 82, 84}); !nearlyEqual(got, 82) {
-		t.Errorf("mean = %v, want 82", got)
+func TestMeanKg(t *testing.T) {
+	if got := meanKg([]int64{80000, 82000, 84000}); !nearlyEqual(got, 82) {
+		t.Errorf("meanKg = %v, want 82", got)
 	}
-	if got := mean([]float64{81.5}); !nearlyEqual(got, 81.5) {
-		t.Errorf("mean = %v, want 81.5", got)
+	if got := meanKg([]int64{81500}); !nearlyEqual(got, 81.5) {
+		t.Errorf("meanKg = %v, want 81.5", got)
+	}
+	// Summing in integer grams keeps a mean that kilogram floats would drift
+	// on: three readings that do not divide evenly still average exactly.
+	if got := meanKg([]int64{80001, 80001, 80001}); !nearlyEqual(got, 80.001) {
+		t.Errorf("meanKg = %v, want 80.001", got)
 	}
 }

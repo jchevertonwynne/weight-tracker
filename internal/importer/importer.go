@@ -10,6 +10,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +18,9 @@ import (
 
 type ParsedRow struct {
 	RecordedAt time.Time
-	WeightKg   float64
+	// WeightG is whole grams, rounded from whatever unit the file used —
+	// the representation the database stores (see db.KgToGrams).
+	WeightG int64
 }
 
 type SkippedRow struct {
@@ -164,7 +167,7 @@ func Parse(r io.Reader, unit string) (Result, error) {
 			continue
 		}
 
-		result.Rows = append(result.Rows, ParsedRow{RecordedAt: recordedAt, WeightKg: weight})
+		result.Rows = append(result.Rows, ParsedRow{RecordedAt: recordedAt, WeightG: int64(math.Round(weight * 1000))})
 	}
 
 	return result, nil

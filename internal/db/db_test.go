@@ -56,7 +56,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
-	if _, err := CreateEntry(first, at(t, "2026-08-16 07:30"), 82.4, "", time.Now()); err != nil {
+	if _, err := CreateEntry(first, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
 		t.Fatalf("create entry: %v", err)
 	}
 	first.Close()
@@ -80,7 +80,7 @@ func TestEntryRoundTrip(t *testing.T) {
 	sqlDB := openTest(t)
 	recordedAt := at(t, "2026-08-16 07:30")
 
-	id, err := CreateEntry(sqlDB, recordedAt, 82.4, "", time.Now())
+	id, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -89,8 +89,8 @@ func TestEntryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.WeightKg != 82.4 {
-		t.Errorf("WeightKg = %v, want 82.4", got.WeightKg)
+	if got.WeightG != 82400 {
+		t.Errorf("WeightG = %v, want 82400", got.WeightG)
 	}
 	// Timestamps are stored as UTC but must come back as the same instant,
 	// rendered in local time for the period/same-day comparisons.
@@ -101,15 +101,15 @@ func TestEntryRoundTrip(t *testing.T) {
 		t.Errorf("PeriodOverride = %q, want empty (stored as NULL)", got.PeriodOverride)
 	}
 
-	if err := UpdateEntry(sqlDB, id, recordedAt.Add(time.Hour), 81.9, "evening"); err != nil {
+	if err := UpdateEntry(sqlDB, id, recordedAt.Add(time.Hour), 81900, "evening"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, err = GetEntry(sqlDB, id)
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
-	if got.WeightKg != 81.9 || got.PeriodOverride != "evening" {
-		t.Errorf("after update: %v kg, override %q; want 81.9 / evening", got.WeightKg, got.PeriodOverride)
+	if got.WeightG != 81900 || got.PeriodOverride != "evening" {
+		t.Errorf("after update: %v g, override %q; want 81900 / evening", got.WeightG, got.PeriodOverride)
 	}
 
 	if err := DeleteEntry(sqlDB, id); err != nil {
@@ -155,7 +155,7 @@ func TestGoalRoundTrip(t *testing.T) {
 	sqlDB := openTest(t)
 	effectiveFrom := at(t, "2026-08-01 00:00")
 
-	id, err := CreateGoal(sqlDB, 78, effectiveFrom, time.Now())
+	id, err := CreateGoal(sqlDB, 78000, effectiveFrom, time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -163,15 +163,15 @@ func TestGoalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.WeightKg != 78 || !got.EffectiveFrom.Equal(effectiveFrom) {
-		t.Errorf("got %v kg from %v, want 78 from %v", got.WeightKg, got.EffectiveFrom, effectiveFrom)
+	if got.WeightG != 78000 || !got.EffectiveFrom.Equal(effectiveFrom) {
+		t.Errorf("got %v g from %v, want 78000 from %v", got.WeightG, got.EffectiveFrom, effectiveFrom)
 	}
 
-	if err := UpdateGoal(sqlDB, id, 76, effectiveFrom); err != nil {
+	if err := UpdateGoal(sqlDB, id, 76000, effectiveFrom); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if got, _ = GetGoal(sqlDB, id); got.WeightKg != 76 {
-		t.Errorf("after update: %v kg, want 76", got.WeightKg)
+	if got, _ = GetGoal(sqlDB, id); got.WeightG != 76000 {
+		t.Errorf("after update: %v g, want 76000", got.WeightG)
 	}
 	if err := DeleteGoal(sqlDB, id); err != nil {
 		t.Fatalf("delete: %v", err)
@@ -227,7 +227,7 @@ func TestDeleteMissingRowReportsNotFound(t *testing.T) {
 
 func TestDeleteTwiceReportsNotFoundTheSecondTime(t *testing.T) {
 	sqlDB := openTest(t)
-	id, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82.4, "", time.Now())
+	id, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestDeleteTwiceReportsNotFoundTheSecondTime(t *testing.T) {
 func TestExistingRecordedAtSet(t *testing.T) {
 	sqlDB := openTest(t)
 	recordedAt := at(t, "2026-08-16 07:30")
-	if _, err := CreateEntry(sqlDB, recordedAt, 82.4, "", time.Now()); err != nil {
+	if _, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now()); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	set, err := ExistingRecordedAtSet(sqlDB)
@@ -259,8 +259,8 @@ func TestBulkCreateEntries(t *testing.T) {
 	t.Run("inserts every new row", func(t *testing.T) {
 		sqlDB := openTest(t)
 		rows := []NewEntry{
-			{RecordedAt: at(t, "2026-08-14 07:00"), WeightKg: 84},
-			{RecordedAt: at(t, "2026-08-15 07:00"), WeightKg: 83},
+			{RecordedAt: at(t, "2026-08-14 07:00"), WeightG: 84000},
+			{RecordedAt: at(t, "2026-08-15 07:00"), WeightG: 83000},
 		}
 		inserted, err := BulkCreateEntries(sqlDB, rows, map[string]struct{}{}, time.Now())
 		if err != nil {
@@ -274,7 +274,7 @@ func TestBulkCreateEntries(t *testing.T) {
 	t.Run("skips rows already in the database", func(t *testing.T) {
 		sqlDB := openTest(t)
 		existingAt := at(t, "2026-08-14 07:00")
-		if _, err := CreateEntry(sqlDB, existingAt, 84, "", time.Now()); err != nil {
+		if _, err := CreateEntry(sqlDB, existingAt, 84000, "", time.Now()); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		existing, err := ExistingRecordedAtSet(sqlDB)
@@ -282,8 +282,8 @@ func TestBulkCreateEntries(t *testing.T) {
 			t.Fatalf("set: %v", err)
 		}
 		rows := []NewEntry{
-			{RecordedAt: existingAt, WeightKg: 84},
-			{RecordedAt: at(t, "2026-08-15 07:00"), WeightKg: 83},
+			{RecordedAt: existingAt, WeightG: 84000},
+			{RecordedAt: at(t, "2026-08-15 07:00"), WeightG: 83000},
 		}
 		inserted, err := BulkCreateEntries(sqlDB, rows, existing, time.Now())
 		if err != nil {
@@ -302,8 +302,8 @@ func TestBulkCreateEntries(t *testing.T) {
 		sqlDB := openTest(t)
 		sameTime := at(t, "2026-08-14 07:00")
 		rows := []NewEntry{
-			{RecordedAt: sameTime, WeightKg: 84},
-			{RecordedAt: sameTime, WeightKg: 84.5},
+			{RecordedAt: sameTime, WeightG: 84000},
+			{RecordedAt: sameTime, WeightG: 84500},
 		}
 		inserted, err := BulkCreateEntries(sqlDB, rows, map[string]struct{}{}, time.Now())
 		if err != nil {
@@ -328,10 +328,10 @@ func TestBulkCreateEntries(t *testing.T) {
 
 func TestDeleteAllData(t *testing.T) {
 	sqlDB := openTest(t)
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82.4, "", time.Now()); err != nil {
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
 		t.Fatalf("create entry: %v", err)
 	}
-	if _, err := CreateGoal(sqlDB, 78, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
+	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
 	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "note", time.Now()); err != nil {
@@ -349,7 +349,7 @@ func TestDeleteAllData(t *testing.T) {
 	}
 
 	// The tables must still be usable afterwards.
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-17 07:30"), 82.0, "", time.Now()); err != nil {
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
 		t.Errorf("create after delete-all: %v", err)
 	}
 }
@@ -392,15 +392,15 @@ func TestMigrationAddsPeriodOverrideColumn(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("got %d entries, want the pre-existing row preserved", len(entries))
 	}
-	if entries[0].WeightKg != 82.4 {
-		t.Errorf("WeightKg = %v, want 82.4", entries[0].WeightKg)
+	if entries[0].WeightG != 82400 {
+		t.Errorf("WeightG = %v, want 82400 — the legacy 82.4 kg converted to grams", entries[0].WeightG)
 	}
 	if entries[0].PeriodOverride != "" {
 		t.Errorf("PeriodOverride = %q, want empty for a legacy row", entries[0].PeriodOverride)
 	}
 
 	// The new column must be writable on the migrated table.
-	if err := UpdateEntry(migrated, entries[0].ID, entries[0].RecordedAt, 82.4, "evening"); err != nil {
+	if err := UpdateEntry(migrated, entries[0].ID, entries[0].RecordedAt, 82400, "evening"); err != nil {
 		t.Fatalf("update with an override after migration: %v", err)
 	}
 	updated, err := GetEntry(migrated, entries[0].ID)
@@ -430,7 +430,7 @@ func TestStoredTimestampsSurviveATimezoneRoundTrip(t *testing.T) {
 	// A time deliberately near midnight, where a mishandled zone conversion
 	// would shift the calendar date and change the detected period.
 	recordedAt := at(t, "2026-08-16 00:30")
-	id, err := CreateEntry(sqlDB, recordedAt, 82.4, "", time.Now())
+	id, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -446,5 +446,271 @@ func TestStoredTimestampsSurviveATimezoneRoundTrip(t *testing.T) {
 	}
 	if DetectPeriod(got.RecordedAt) != "evening" {
 		t.Error("a 00:30 reading did not come back as evening")
+	}
+}
+
+func TestKgToGramsAndBack(t *testing.T) {
+	tests := []struct {
+		name string
+		kg   float64
+		want int64
+	}{
+		{"a whole kilogram", 82, 82000},
+		{"one decimal place", 82.4, 82400},
+		{"three decimal places", 81.647, 81647},
+		{"rounds half up", 81.6465, 81647},
+		{"rounds down below the half gram", 81.64649, 81646},
+		{"a float with representation error", 180 * 0.45359237, 81647},
+		{"a tiny weight", 0.001, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := KgToGrams(tc.kg); got != tc.want {
+				t.Errorf("KgToGrams(%v) = %d, want %d", tc.kg, got, tc.want)
+			}
+		})
+	}
+
+	// Grams are the canonical value, so the round trip that must hold is
+	// grams -> kg -> grams, not the other way (a kg float can carry more
+	// precision than a whole gram can represent).
+	for _, grams := range []int64{1, 999, 82000, 82400, 81647, 250000} {
+		if got := KgToGrams(GramsToKg(grams)); got != grams {
+			t.Errorf("%d g round-tripped to %d g", grams, got)
+		}
+	}
+}
+
+func TestGramsToKg(t *testing.T) {
+	tests := []struct {
+		grams int64
+		want  float64
+	}{
+		{82000, 82},
+		{82400, 82.4},
+		{81647, 81.647},
+		{0, 0},
+	}
+	for _, tc := range tests {
+		if got := GramsToKg(tc.grams); got != tc.want {
+			t.Errorf("GramsToKg(%d) = %v, want %v", tc.grams, got, tc.want)
+		}
+	}
+}
+
+// seedLegacyKilogramDatabase creates a database in the pre-grams shape —
+// entries and goals both holding REAL kilograms — and returns its path.
+func seedLegacyKilogramDatabase(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy: %v", err)
+	}
+	defer legacy.Close()
+
+	_, err = legacy.Exec(`
+		CREATE TABLE entries (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at     TEXT    NOT NULL,
+			weight_kg       REAL    NOT NULL,
+			period_override TEXT,
+			created_at      TEXT    NOT NULL
+		);
+		CREATE INDEX idx_entries_recorded_at ON entries (recorded_at);
+		INSERT INTO entries (id, recorded_at, weight_kg, period_override, created_at) VALUES
+			(1, '2026-08-14T06:00:00Z', 82.4,              NULL,      '2026-08-14T06:00:00Z'),
+			(2, '2026-08-14T20:00:00Z', 83.1,              'evening', '2026-08-14T20:00:00Z'),
+			(3, '2026-08-15T06:00:00Z', 81.64662660000001, NULL,      '2026-08-15T06:00:00Z');
+
+		CREATE TABLE goals (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			weight_kg      REAL    NOT NULL,
+			effective_from TEXT    NOT NULL,
+			created_at     TEXT    NOT NULL
+		);
+		CREATE INDEX idx_goals_effective_from ON goals (effective_from);
+		INSERT INTO goals (id, weight_kg, effective_from, created_at) VALUES
+			(1, 78.0, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'),
+			(2, 76.5, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z');
+	`)
+	if err != nil {
+		t.Fatalf("seed legacy kilogram schema: %v", err)
+	}
+	return path
+}
+
+func TestMigrationConvertsKilogramsToGrams(t *testing.T) {
+	path := seedLegacyKilogramDatabase(t)
+
+	sqlDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("open (migrate): %v", err)
+	}
+	defer sqlDB.Close()
+
+	entries, err := ListEntries(sqlDB)
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want all 3 preserved", len(entries))
+	}
+
+	// ListEntries is newest-first, so index by id instead of position.
+	byID := make(map[int64]Entry, len(entries))
+	for _, e := range entries {
+		byID[e.ID] = e
+	}
+	wantGrams := map[int64]int64{
+		1: 82400,
+		2: 83100,
+		// The whole point of the migration: a value that a REAL column had
+		// been printing as 81.64662660000001 becomes an exact 81647 g.
+		3: 81647,
+	}
+	for id, want := range wantGrams {
+		if got := byID[id].WeightG; got != want {
+			t.Errorf("entry %d: %d g, want %d", id, got, want)
+		}
+	}
+
+	// Everything else about each row must survive untouched.
+	if byID[2].PeriodOverride != "evening" {
+		t.Errorf("entry 2 period_override = %q, want evening", byID[2].PeriodOverride)
+	}
+	if byID[1].PeriodOverride != "" {
+		t.Errorf("entry 1 period_override = %q, want empty", byID[1].PeriodOverride)
+	}
+	wantRecordedAt := time.Date(2026, 8, 14, 6, 0, 0, 0, time.UTC)
+	if !byID[1].RecordedAt.Equal(wantRecordedAt) {
+		t.Errorf("entry 1 recorded_at = %v, want %v", byID[1].RecordedAt, wantRecordedAt)
+	}
+
+	goals, err := ListGoals(sqlDB)
+	if err != nil {
+		t.Fatalf("list goals: %v", err)
+	}
+	if len(goals) != 2 {
+		t.Fatalf("got %d goals, want 2", len(goals))
+	}
+	goalsByID := make(map[int64]Goal, len(goals))
+	for _, g := range goals {
+		goalsByID[g.ID] = g
+	}
+	if got := goalsByID[1].WeightG; got != 78000 {
+		t.Errorf("goal 1 = %d g, want 78000", got)
+	}
+	if got := goalsByID[2].WeightG; got != 76500 {
+		t.Errorf("goal 2 = %d g, want 76500", got)
+	}
+}
+
+func TestMigrationPreservesAutoincrementAfterRebuild(t *testing.T) {
+	path := seedLegacyKilogramDatabase(t)
+	sqlDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("open (migrate): %v", err)
+	}
+	defer sqlDB.Close()
+
+	// Ids were copied explicitly, so the next insert must not collide with
+	// an existing row.
+	id, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:00"), 81000, "", time.Now())
+	if err != nil {
+		t.Fatalf("create after migration: %v", err)
+	}
+	if id <= 3 {
+		t.Errorf("new entry got id %d, want one past the migrated rows", id)
+	}
+}
+
+func TestMigrationRecreatesIndexes(t *testing.T) {
+	path := seedLegacyKilogramDatabase(t)
+	sqlDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("open (migrate): %v", err)
+	}
+	defer sqlDB.Close()
+
+	// Dropping the old table takes its indexes with it; the migration has to
+	// put them back or every range query degrades to a scan.
+	for _, want := range []string{"idx_entries_recorded_at", "idx_goals_effective_from"} {
+		var name string
+		err := sqlDB.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, want).Scan(&name)
+		if err != nil {
+			t.Errorf("index %s missing after migration: %v", want, err)
+		}
+	}
+}
+
+func TestMigrationIsIdempotentAcrossReopens(t *testing.T) {
+	path := seedLegacyKilogramDatabase(t)
+
+	for i := range 3 {
+		sqlDB, err := Open(path)
+		if err != nil {
+			t.Fatalf("open %d: %v", i+1, err)
+		}
+		entries, err := ListEntries(sqlDB)
+		if err != nil {
+			t.Fatalf("list entries on open %d: %v", i+1, err)
+		}
+		if len(entries) != 3 {
+			t.Fatalf("open %d: got %d entries, want 3 — a repeated migration lost or duplicated rows", i+1, len(entries))
+		}
+		if entries[0].WeightG == 0 {
+			t.Fatalf("open %d: weight is zero, a second migration re-converted already-converted grams", i+1)
+		}
+		sqlDB.Close()
+	}
+}
+
+// TestMigrationFromTheOldestSchema covers a database predating both
+// period_override and grams, so it has to pass through each migration in
+// turn — the ordering Open depends on.
+func TestMigrationFromTheOldestSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ancient.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy: %v", err)
+	}
+	_, err = legacy.Exec(`
+		CREATE TABLE entries (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at TEXT    NOT NULL,
+			weight_kg   REAL    NOT NULL,
+			created_at  TEXT    NOT NULL
+		);
+		INSERT INTO entries (recorded_at, weight_kg, created_at)
+		VALUES ('2026-08-16T06:30:00Z', 82.4, '2026-08-16T06:30:00Z');
+	`)
+	if err != nil {
+		t.Fatalf("seed ancient schema: %v", err)
+	}
+	legacy.Close()
+
+	sqlDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("open (migrate): %v", err)
+	}
+	defer sqlDB.Close()
+
+	entries, err := ListEntries(sqlDB)
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].WeightG != 82400 {
+		t.Errorf("WeightG = %d, want 82400", entries[0].WeightG)
+	}
+	if entries[0].PeriodOverride != "" {
+		t.Errorf("PeriodOverride = %q, want empty", entries[0].PeriodOverride)
+	}
+	// Both new columns must be writable on the doubly-migrated table.
+	if err := UpdateEntry(sqlDB, entries[0].ID, entries[0].RecordedAt, 81500, "evening"); err != nil {
+		t.Fatalf("update after migration: %v", err)
 	}
 }

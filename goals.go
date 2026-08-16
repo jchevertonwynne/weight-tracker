@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -28,8 +27,8 @@ func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
 	for i, g := range goals {
 		row := GoalRow{
 			ID:                 g.ID,
-			WeightKgRaw:        fmt.Sprintf("%g", g.WeightKg),
-			WeightKgStr:        fmt.Sprintf("%.1f", g.WeightKg),
+			WeightKgRaw:        formatKgInput(g.WeightG),
+			WeightKgStr:        formatKg(g.WeightG),
 			EffectiveFromLabel: g.EffectiveFrom.Format("Jan 2, 2006"),
 			EffectiveFromDate:  g.EffectiveFrom.Format("2006-01-02"),
 		}
@@ -45,9 +44,9 @@ func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
 // GoalSegment is one time-bounded goal validity period: [From, Until).
 // A zero Until means open-ended (the most recent goal).
 type GoalSegment struct {
-	WeightKg float64
-	From     time.Time
-	Until    time.Time
+	WeightG int64
+	From    time.Time
+	Until   time.Time
 }
 
 // buildGoalSegments turns goals (any order) into non-overlapping segments:
@@ -65,7 +64,7 @@ func buildGoalSegments(goals []db.Goal) []GoalSegment {
 
 	segs := make([]GoalSegment, len(sorted))
 	for i, g := range sorted {
-		seg := GoalSegment{WeightKg: g.WeightKg, From: g.EffectiveFrom}
+		seg := GoalSegment{WeightG: g.WeightG, From: g.EffectiveFrom}
 		if i+1 < len(sorted) {
 			seg.Until = sorted[i+1].EffectiveFrom
 		}
@@ -90,7 +89,7 @@ func clipGoalSegments(segs []GoalSegment, from, until time.Time) []GoalSegment {
 		if !segFrom.Before(segUntil) {
 			continue
 		}
-		out = append(out, GoalSegment{WeightKg: s.WeightKg, From: segFrom, Until: segUntil})
+		out = append(out, GoalSegment{WeightG: s.WeightG, From: segFrom, Until: segUntil})
 	}
 	return out
 }
@@ -112,7 +111,7 @@ func (s *server) renderGoalsList(w http.ResponseWriter) {
 }
 
 func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
-	weightKg, err := parseWeightKg(r)
+	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -122,7 +121,7 @@ func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateGoal(s.db, weightKg, effectiveFrom, time.Now()); err != nil {
+	if _, err := db.CreateGoal(s.db, weightG, effectiveFrom, time.Now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -174,7 +173,7 @@ func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	weightKg, err := parseWeightKg(r)
+	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -184,7 +183,7 @@ func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateGoal(s.db, id, weightKg, effectiveFrom); err != nil {
+	if err := db.UpdateGoal(s.db, id, weightG, effectiveFrom); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

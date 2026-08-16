@@ -49,7 +49,9 @@
 {{define "goal-row-edit"}}
 <div class="entry-row entry-row-editing" id="goal-{{.ID}}">
 	<form class="edit-form" hx-put="/goals/{{.ID}}" hx-target="#goals-list" hx-swap="outerHTML">
-		<input type="number" step="0.1" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
+		{{/* step="any" for the same reason as the entry edit form: the stored
+		     value may have finer precision than 0.1 kg. */}}
+		<input type="number" step="any" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
 		<input type="date" name="effective_from" value="{{.EffectiveFromDate}}" required>
 		<button type="submit" class="btn btn-primary btn-small">Save</button>
 		<button type="button" class="btn-text btn-small" hx-get="/goals/{{.ID}}" hx-target="#goal-{{.ID}}" hx-swap="outerHTML">Cancel</button>

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,8 +21,11 @@ func at(t *testing.T, s string) time.Time {
 }
 
 // entry builds a db.Entry with only the fields the delta logic reads.
+// entry builds a db.Entry from a kilogram figure, since that is what the
+// test cases read naturally; storage is grams, so it converts on the way in
+// exactly as the handlers do.
 func entry(id int64, recordedAt time.Time, weightKg float64, override string) db.Entry {
-	return db.Entry{ID: id, RecordedAt: recordedAt, WeightKg: weightKg, PeriodOverride: override}
+	return db.Entry{ID: id, RecordedAt: recordedAt, WeightG: db.KgToGrams(weightKg), PeriodOverride: override}
 }
 
 const epsilon = 1e-9
@@ -162,8 +166,8 @@ func TestChronologicalWithDeltas(t *testing.T) {
 		if !ok {
 			t.Fatal("no overnight delta for the morning entry")
 		}
-		if !nearlyEqual(got, -1.1) {
-			t.Errorf("overnight delta = %v, want -1.1", got)
+		if got != -1100 {
+			t.Errorf("overnight delta = %v g, want -1100", got)
 		}
 		if len(daily) != 0 {
 			t.Errorf("unexpected daily deltas: %v", daily)
@@ -180,8 +184,8 @@ func TestChronologicalWithDeltas(t *testing.T) {
 		if !ok {
 			t.Fatal("no daily delta for the evening entry")
 		}
-		if !nearlyEqual(got, 0.7) {
-			t.Errorf("daily delta = %v, want 0.7", got)
+		if got != 700 {
+			t.Errorf("daily delta = %v g, want 700", got)
 		}
 		if len(overnight) != 0 {
 			t.Errorf("unexpected overnight deltas: %v", overnight)
@@ -201,8 +205,8 @@ func TestChronologicalWithDeltas(t *testing.T) {
 		if !ok {
 			t.Fatal("no overnight delta across the 4am boundary")
 		}
-		if !nearlyEqual(got, -0.9) {
-			t.Errorf("overnight delta = %v, want -0.9", got)
+		if got != -900 {
+			t.Errorf("overnight delta = %v g, want -900", got)
 		}
 	})
 
@@ -240,8 +244,8 @@ func TestChronologicalWithDeltas(t *testing.T) {
 		if !ok {
 			t.Fatal("no overnight delta when the partner was overridden to evening")
 		}
-		if !nearlyEqual(got, -1.0) {
-			t.Errorf("overnight delta = %v, want -1.0", got)
+		if got != -1000 {
+			t.Errorf("overnight delta = %v g, want -1000", got)
 		}
 	})
 
@@ -254,13 +258,13 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(5, at(t, "2026-08-16 07:00"), 83.0, ""),
 		}
 		_, overnight, daily := chronologicalWithDeltas(entries)
-		wantOvernight := map[int64]float64{3: -1.5, 5: -1.2}
-		wantDaily := map[int64]float64{2: 1.0, 4: 0.7}
+		wantOvernight := map[int64]int64{3: -1500, 5: -1200}
+		wantDaily := map[int64]int64{2: 1000, 4: 700}
 		if len(overnight) != len(wantOvernight) {
 			t.Errorf("overnight = %v, want %v", overnight, wantOvernight)
 		}
 		for id, want := range wantOvernight {
-			if got := overnight[id]; !nearlyEqual(got, want) {
+			if got := overnight[id]; got != want {
 				t.Errorf("overnight[%d] = %v, want %v", id, got, want)
 			}
 		}
@@ -268,7 +272,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			t.Errorf("daily = %v, want %v", daily, wantDaily)
 		}
 		for id, want := range wantDaily {
-			if got := daily[id]; !nearlyEqual(got, want) {
+			if got := daily[id]; got != want {
 				t.Errorf("daily[%d] = %v, want %v", id, got, want)
 			}
 		}
@@ -338,4 +342,73 @@ func TestBuildRowsFormatsGainsWithASign(t *testing.T) {
 	if !evening.DailyGain {
 		t.Error("DailyGain = false, want true")
 	}
+}
+
+func TestFormatKg(t *testing.T) {
+	tests := []struct {
+		grams int64
+		want  string
+	}{
+		{82400, "82.4"},
+		{82000, "82.0"},
+		{81647, "81.6"}, // display rounds to the scale's precision
+		{81650, "81.7"},
+		{0, "0.0"},
+	}
+	for _, tc := range tests {
+		if got := formatKg(tc.grams); got != tc.want {
+			t.Errorf("formatKg(%d) = %q, want %q", tc.grams, got, tc.want)
+		}
+	}
+}
+
+func TestFormatKgDelta(t *testing.T) {
+	tests := []struct {
+		grams int64
+		want  string
+	}{
+		{-1100, "-1.1 kg"},
+		{700, "+0.7 kg"},
+		{0, "+0.0 kg"},
+		{-50, "-0.1 kg"}, // rounds for display, but the sign is never lost
+	}
+	for _, tc := range tests {
+		if got := formatKgDelta(tc.grams); got != tc.want {
+			t.Errorf("formatKgDelta(%d) = %q, want %q", tc.grams, got, tc.want)
+		}
+	}
+}
+
+func TestFormatKgInputKeepsStoredPrecision(t *testing.T) {
+	// The edit form must round-trip the stored value exactly, so that saving
+	// an untouched row cannot quietly change it.
+	tests := []struct {
+		grams int64
+		want  string
+	}{
+		{82400, "82.4"},
+		{82000, "82"},
+		{81647, "81.647"},
+		{81600, "81.6"},
+		{1, "0.001"},
+	}
+	for _, tc := range tests {
+		got := formatKgInput(tc.grams)
+		if got != tc.want {
+			t.Errorf("formatKgInput(%d) = %q, want %q", tc.grams, got, tc.want)
+		}
+		// Whatever it renders must parse back to the same grams.
+		if back := db.KgToGrams(mustParseFloat(t, got)); back != tc.grams {
+			t.Errorf("formatKgInput(%d) = %q, which reads back as %d g", tc.grams, got, back)
+		}
+	}
+}
+
+func mustParseFloat(t *testing.T, s string) float64 {
+	t.Helper()
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return f
 }

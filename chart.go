@@ -132,8 +132,8 @@ func emptyChartMessage(seriesParam string) string {
 // This is a plain day-over-day comparison, distinct from the overnight/daily
 // deltas used in the history list (which compare across periods: morning
 // vs. the prior evening, or evening vs. that same day's morning).
-func sequentialDeltas(chrono []db.Entry, period string) map[int64]float64 {
-	deltas := make(map[int64]float64)
+func sequentialDeltas(chrono []db.Entry, period string) map[int64]int64 {
+	deltas := make(map[int64]int64)
 	var last *db.Entry
 	for i := range chrono {
 		e := &chrono[i]
@@ -141,7 +141,7 @@ func sequentialDeltas(chrono []db.Entry, period string) map[int64]float64 {
 			continue
 		}
 		if last != nil {
-			deltas[e.ID] = e.WeightKg - last.WeightKg
+			deltas[e.ID] = e.WeightG - last.WeightG
 		}
 		last = e
 	}
@@ -195,7 +195,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 	window := resolveRangeWindow(rangeParam, fromParam, untilParam, today)
 	isBar := seriesParam == "morning-delta" || seriesParam == "evening-delta"
 
-	var morningDeltaByID, eveningDeltaByID map[int64]float64
+	var morningDeltaByID, eveningDeltaByID map[int64]int64
 	switch seriesParam {
 	case "morning-delta":
 		morningDeltaByID = sequentialDeltas(chrono, "morning")
@@ -212,7 +212,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 			if period != seriesParam {
 				continue
 			}
-			p := chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: e.WeightKg, class: period}
+			p := chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(e.WeightG), class: period}
 			trendSourcePts = append(trendSourcePts, p)
 			if visible {
 				pts = append(pts, p)
@@ -225,7 +225,7 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 			if !ok {
 				continue
 			}
-			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: delta, class: deltaClass(delta)})
+			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(delta), class: deltaClass(delta)})
 		case "evening-delta":
 			if !visible {
 				continue
@@ -234,9 +234,9 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 			if !ok {
 				continue
 			}
-			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: delta, class: deltaClass(delta)})
+			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(delta), class: deltaClass(delta)})
 		default: // "all"
-			p := chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: e.WeightKg, class: period}
+			p := chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(e.WeightG), class: period}
 			trendSourcePts = append(trendSourcePts, p)
 			if visible {
 				pts = append(pts, p)
@@ -286,8 +286,8 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 				// vertical jump at the boundary, rendering a step shape with
 				// a single plain line dataset.
 				data.Goals = append(data.Goals,
-					XY{X: msOf(seg.From), Y: seg.WeightKg},
-					XY{X: msOf(seg.Until), Y: seg.WeightKg},
+					XY{X: msOf(seg.From), Y: db.GramsToKg(seg.WeightG)},
+					XY{X: msOf(seg.Until), Y: db.GramsToKg(seg.WeightG)},
 				)
 			}
 		}
@@ -302,8 +302,9 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 	return data
 }
 
-func deltaClass(delta float64) string {
-	if delta < 0 {
+func deltaClass(deltaG int64) string {
+
+	if deltaG < 0 {
 		return "loss"
 	}
 	return "gain"

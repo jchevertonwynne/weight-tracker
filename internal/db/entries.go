@@ -9,7 +9,7 @@ import (
 type Entry struct {
 	ID         int64
 	RecordedAt time.Time
-	WeightKg   float64
+	WeightG    int64
 	// PeriodOverride is "" (auto-detect from RecordedAt via DetectPeriod),
 	// "morning", or "evening" — set when the user manually overrides the
 	// period detected for a weigh-in logged close to the morning/evening
@@ -28,10 +28,10 @@ func nullIfEmpty(s string) any {
 	return s
 }
 
-func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightKg float64, periodOverride string, createdAt time.Time) (int64, error) {
+func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightG int64, periodOverride string, createdAt time.Time) (int64, error) {
 	res, err := sqlDB.Exec(
-		`INSERT INTO entries (recorded_at, weight_kg, period_override, created_at) VALUES (?, ?, ?, ?)`,
-		recordedAt.UTC().Format(time.RFC3339), weightKg, nullIfEmpty(periodOverride), createdAt.UTC().Format(time.RFC3339),
+		`INSERT INTO entries (recorded_at, weight_g, period_override, created_at) VALUES (?, ?, ?, ?)`,
+		recordedAt.UTC().Format(time.RFC3339), weightG, nullIfEmpty(periodOverride), createdAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert entry: %w", err)
@@ -39,10 +39,10 @@ func CreateEntry(sqlDB *sql.DB, recordedAt time.Time, weightKg float64, periodOv
 	return res.LastInsertId()
 }
 
-func UpdateEntry(sqlDB *sql.DB, id int64, recordedAt time.Time, weightKg float64, periodOverride string) error {
+func UpdateEntry(sqlDB *sql.DB, id int64, recordedAt time.Time, weightG int64, periodOverride string) error {
 	_, err := sqlDB.Exec(
-		`UPDATE entries SET recorded_at = ?, weight_kg = ?, period_override = ? WHERE id = ?`,
-		recordedAt.UTC().Format(time.RFC3339), weightKg, nullIfEmpty(periodOverride), id,
+		`UPDATE entries SET recorded_at = ?, weight_g = ?, period_override = ? WHERE id = ?`,
+		recordedAt.UTC().Format(time.RFC3339), weightG, nullIfEmpty(periodOverride), id,
 	)
 	if err != nil {
 		return fmt.Errorf("update entry %d: %w", id, err)
@@ -58,8 +58,8 @@ func GetEntry(sqlDB *sql.DB, id int64) (Entry, error) {
 	var e Entry
 	var recordedAt, createdAt string
 	err := sqlDB.QueryRow(
-		`SELECT id, recorded_at, weight_kg, COALESCE(period_override, ''), created_at FROM entries WHERE id = ?`, id,
-	).Scan(&e.ID, &recordedAt, &e.WeightKg, &e.PeriodOverride, &createdAt)
+		`SELECT id, recorded_at, weight_g, COALESCE(period_override, ''), created_at FROM entries WHERE id = ?`, id,
+	).Scan(&e.ID, &recordedAt, &e.WeightG, &e.PeriodOverride, &createdAt)
 	if err != nil {
 		return Entry{}, fmt.Errorf("get entry %d: %w", id, err)
 	}
@@ -75,7 +75,7 @@ func GetEntry(sqlDB *sql.DB, id int64) (Entry, error) {
 // ListEntries returns every entry newest-first.
 func ListEntries(sqlDB *sql.DB) ([]Entry, error) {
 	rows, err := sqlDB.Query(
-		`SELECT id, recorded_at, weight_kg, COALESCE(period_override, ''), created_at FROM entries ORDER BY recorded_at DESC`,
+		`SELECT id, recorded_at, weight_g, COALESCE(period_override, ''), created_at FROM entries ORDER BY recorded_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list entries: %w", err)
@@ -86,7 +86,7 @@ func ListEntries(sqlDB *sql.DB) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var recordedAt, createdAt string
-		if err := rows.Scan(&e.ID, &recordedAt, &e.WeightKg, &e.PeriodOverride, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &recordedAt, &e.WeightG, &e.PeriodOverride, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
 		if e.RecordedAt, err = parseStoredTime(recordedAt); err != nil {
@@ -103,7 +103,7 @@ func ListEntries(sqlDB *sql.DB) ([]Entry, error) {
 // NewEntry is a not-yet-persisted entry, used for bulk imports.
 type NewEntry struct {
 	RecordedAt time.Time
-	WeightKg   float64
+	WeightG    int64
 }
 
 // ExistingRecordedAtSet returns the set of recorded_at values (as stored,
@@ -138,7 +138,7 @@ func BulkCreateEntries(sqlDB *sql.DB, rows []NewEntry, existing map[string]struc
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO entries (recorded_at, weight_kg, created_at) VALUES (?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO entries (recorded_at, weight_g, created_at) VALUES (?, ?, ?)`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare insert: %w", err)
 	}
@@ -151,7 +151,7 @@ func BulkCreateEntries(sqlDB *sql.DB, rows []NewEntry, existing map[string]struc
 		if _, dup := existing[key]; dup {
 			continue
 		}
-		if _, err := stmt.Exec(key, row.WeightKg, createdAtStr); err != nil {
+		if _, err := stmt.Exec(key, row.WeightG, createdAtStr); err != nil {
 			return inserted, fmt.Errorf("insert row at %s: %w", key, err)
 		}
 		existing[key] = struct{}{}

@@ -246,15 +246,16 @@ func uploadCSV(t *testing.T, csv, unit string) *http.Request {
 func TestHandleImportAcceptsEveryUnitTheFormOffers(t *testing.T) {
 	// Regression: the form offered "grams" while the handler accepted only
 	// kg and lb, so choosing it failed with a 400.
+	// Expectations are exact gram counts — storing whole grams means an
+	// import no longer lands on an approximate value needing a tolerance.
 	tests := []struct {
-		unit      string
-		csv       string
-		wantKg    float64
-		tolerance float64
+		unit  string
+		csv   string
+		wantG int64
 	}{
-		{"kg", "recorded_at,weight\n2026-08-14T07:00:00Z,81.5\n", 81.5, 0.001},
-		{"lb", "recorded_at,weight\n2026-08-14T07:00:00Z,180\n", 81.6466, 0.001},
-		{"g", "recorded_at,weight\n2026-08-14T07:00:00Z,81500\n", 81.5, 0.001},
+		{"kg", "recorded_at,weight\n2026-08-14T07:00:00Z,81.5\n", 81500},
+		{"lb", "recorded_at,weight\n2026-08-14T07:00:00Z,180\n", 81647}, // 180 lb = 81.6466266 kg
+		{"g", "recorded_at,weight\n2026-08-14T07:00:00Z,81500\n", 81500},
 	}
 	for _, tc := range tests {
 		t.Run(tc.unit, func(t *testing.T) {
@@ -271,8 +272,8 @@ func TestHandleImportAcceptsEveryUnitTheFormOffers(t *testing.T) {
 			if len(entries) != 1 {
 				t.Fatalf("stored %d entries, want 1", len(entries))
 			}
-			if diff := entries[0].WeightKg - tc.wantKg; diff > tc.tolerance || diff < -tc.tolerance {
-				t.Errorf("stored %v kg, want ~%v", entries[0].WeightKg, tc.wantKg)
+			if entries[0].WeightG != tc.wantG {
+				t.Errorf("stored %v g, want %v", entries[0].WeightG, tc.wantG)
 			}
 		})
 	}
@@ -356,8 +357,8 @@ func TestHandleExportRoundTripsThroughImport(t *testing.T) {
 		t.Fatalf("re-imported %d entries, want %d", len(reimported), len(original))
 	}
 	for i := range original {
-		if !nearlyEqual(original[i].WeightKg, reimported[i].WeightKg) {
-			t.Errorf("entry %d: %v kg became %v kg", i, original[i].WeightKg, reimported[i].WeightKg)
+		if original[i].WeightG != reimported[i].WeightG {
+			t.Errorf("entry %d: %v g became %v g", i, original[i].WeightG, reimported[i].WeightG)
 		}
 		if !original[i].RecordedAt.Equal(reimported[i].RecordedAt) {
 			t.Errorf("entry %d: %v became %v", i, original[i].RecordedAt, reimported[i].RecordedAt)

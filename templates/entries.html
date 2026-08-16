@@ -34,7 +34,11 @@
 {{define "row-edit"}}
 <div class="entry-row entry-row-editing" id="entry-{{.ID}}">
 	<form class="edit-form" hx-put="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML">
-		<input type="number" step="0.1" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
+		{{/* step="any", not "0.1": the value is the stored weight rendered
+		     back to kilograms, which for an imported or unit-converted entry
+		     can carry three decimals (81.647). A 0.1 step would make the
+		     browser reject saving an untouched row. */}}
+		<input type="number" step="any" min="0" name="weight_kg" value="{{.WeightKgRaw}}" required>
 		<input type="date" name="recorded_at_date" value="{{.RecordedAtDate}}" required>
 		<input type="time" name="recorded_at_time" value="{{.RecordedAtTime}}" required>
 		<select name="period_override">

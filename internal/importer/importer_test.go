@@ -46,8 +46,8 @@ func TestParseGoogleHealthExport(t *testing.T) {
 	if len(got.Skipped) != 0 {
 		t.Errorf("skipped %v, want none", got.Skipped)
 	}
-	if !nearlyEqual(got.Rows[0].WeightKg, 81.5) {
-		t.Errorf("weight = %v kg, want 81.5 — the 'weight grams' header should override the form's unit", got.Rows[0].WeightKg)
+	if got.Rows[0].WeightG != 81500 {
+		t.Errorf("weight = %v g, want 81500 — the 'weight grams' header should override the form's unit", got.Rows[0].WeightG)
 	}
 	// A UTC timestamp must land on the same instant, expressed locally.
 	wantInstant := time.Date(2026, 8, 14, 6, 0, 0, 0, time.UTC)
@@ -65,8 +65,8 @@ func TestParseAppsOwnExport(t *testing.T) {
 	if len(got.Rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(got.Rows))
 	}
-	if !nearlyEqual(got.Rows[0].WeightKg, 81.5) {
-		t.Errorf("weight = %v, want 81.5", got.Rows[0].WeightKg)
+	if got.Rows[0].WeightG != 81500 {
+		t.Errorf("weight = %v g, want 81500", got.Rows[0].WeightG)
 	}
 }
 
@@ -74,18 +74,19 @@ func TestParseAmbiguousWeightColumnUsesTheFormUnit(t *testing.T) {
 	csv := "recorded_at,weight\n2026-08-14T07:00:00Z,180\n"
 
 	asKg := parseOK(t, csv, "kg")
-	if !nearlyEqual(asKg.Rows[0].WeightKg, 180) {
-		t.Errorf("as kg = %v, want 180", asKg.Rows[0].WeightKg)
+	if asKg.Rows[0].WeightG != 180000 {
+		t.Errorf("as kg = %v g, want 180000", asKg.Rows[0].WeightG)
 	}
 
 	asLb := parseOK(t, csv, "lb")
-	if !nearlyEqual(asLb.Rows[0].WeightKg, 180*lbToKg) {
-		t.Errorf("as lb = %v, want %v", asLb.Rows[0].WeightKg, 180*lbToKg)
+	// 180 lb = 81.64662660 kg, which rounds to a whole 81647 g.
+	if asLb.Rows[0].WeightG != 81647 {
+		t.Errorf("as lb = %v g, want 81647", asLb.Rows[0].WeightG)
 	}
 
 	asG := parseOK(t, csv, "g")
-	if !nearlyEqual(asG.Rows[0].WeightKg, 0.18) {
-		t.Errorf("as grams = %v, want 0.18", asG.Rows[0].WeightKg)
+	if asG.Rows[0].WeightG != 180 {
+		t.Errorf("as grams = %v g, want 180", asG.Rows[0].WeightG)
 	}
 }
 
@@ -93,8 +94,8 @@ func TestParseWeightColumnPriority(t *testing.T) {
 	// weight_kg is checked before the ambiguous bare "weight" column.
 	csv := "recorded_at,weight,weight_kg\n2026-08-14T07:00:00Z,999,81.5\n"
 	got := parseOK(t, csv, "lb")
-	if !nearlyEqual(got.Rows[0].WeightKg, 81.5) {
-		t.Errorf("weight = %v, want 81.5 from the self-describing column", got.Rows[0].WeightKg)
+	if got.Rows[0].WeightG != 81500 {
+		t.Errorf("weight = %v g, want 81500 from the self-describing column", got.Rows[0].WeightG)
 	}
 }
 
@@ -105,8 +106,8 @@ func TestParseSplitDateAndTimeColumns(t *testing.T) {
 	if len(got.Rows) != 1 {
 		t.Fatalf("got %d rows (skipped %v), want 1", len(got.Rows), got.Skipped)
 	}
-	if !nearlyEqual(got.Rows[0].WeightKg, 180*lbToKg) {
-		t.Errorf("weight = %v, want %v", got.Rows[0].WeightKg, 180*lbToKg)
+	if got.Rows[0].WeightG != 81647 {
+		t.Errorf("weight = %v g, want 81647", got.Rows[0].WeightG)
 	}
 	if got.Rows[0].RecordedAt.Year() != 2026 || got.Rows[0].RecordedAt.Month() != time.August {
 		t.Errorf("RecordedAt = %v, want August 2026", got.Rows[0].RecordedAt)
@@ -196,8 +197,8 @@ func TestParseHeaderIsCaseAndSpaceInsensitive(t *testing.T) {
 	if len(got.Rows) != 1 {
 		t.Fatalf("got %d rows (skipped %v), want 1", len(got.Rows), got.Skipped)
 	}
-	if !nearlyEqual(got.Rows[0].WeightKg, 81.5) {
-		t.Errorf("weight = %v, want 81.5", got.Rows[0].WeightKg)
+	if got.Rows[0].WeightG != 81500 {
+		t.Errorf("weight = %v g, want 81500", got.Rows[0].WeightG)
 	}
 }
 
