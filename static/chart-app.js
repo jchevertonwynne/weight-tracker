@@ -6,6 +6,26 @@
 	const form = document.getElementById('chart-controls');
 	let chart = null;
 
+	// showFailure puts the reason in the card instead of leaving a blank
+	// rectangle. Every failure below used to be silent: the canvas kept its
+	// size, nothing drew, and the only clue was a console message — which is
+	// no clue at all on a phone.
+	function showFailure(message) {
+		canvas.hidden = true;
+		if (emptyEl) {
+			emptyEl.hidden = false;
+			emptyEl.textContent = message;
+		}
+	}
+
+	// Chart.register below runs at load and throws if the library is missing,
+	// aborting this whole script — including the code that would have
+	// reported the problem. Check first so that failure is visible.
+	if (typeof Chart === 'undefined') {
+		showFailure('Chart library failed to load. Reload the page; if it persists, check /static/chart.min.js.');
+		return;
+	}
+
 	function cssVar(name) {
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
@@ -446,15 +466,26 @@
 		canvas.hidden = false;
 		if (emptyEl) emptyEl.hidden = true;
 		canvas.style.cursor = '';
-		chart = new Chart(canvas, buildConfig(data));
+		try {
+			chart = new Chart(canvas, buildConfig(data));
+		} catch (err) {
+			console.error('chart build failed', err);
+			showFailure('Could not draw the chart: ' + (err && err.message ? err.message : err));
+		}
 	}
 
 	function refreshChart() {
 		const params = new URLSearchParams(new FormData(form));
 		fetch('/chart?' + params.toString())
-			.then((res) => res.json())
+			.then((res) => {
+				if (!res.ok) throw new Error('server returned ' + res.status);
+				return res.json();
+			})
 			.then(renderChart)
-			.catch((err) => console.error('chart refresh failed', err));
+			.catch((err) => {
+				console.error('chart refresh failed', err);
+				showFailure('Could not load chart data: ' + (err && err.message ? err.message : err));
+			});
 	}
 
 	canvas.addEventListener('click', (event) => {
