@@ -550,3 +550,36 @@ func TestHandleBackupDoesNotDisturbTheLiveDatabase(t *testing.T) {
 		t.Errorf("live database holds %d entries after backup, want 2", len(entries))
 	}
 }
+
+func TestHandleServiceWorker(t *testing.T) {
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleServiceWorker(rec, httptest.NewRequest(http.MethodGet, "/sw.js", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/javascript") {
+		t.Errorf("Content-Type = %q, want application/javascript", ct)
+	}
+	// The worker script is the one thing that must never be served from a
+	// stale cache: it is what teaches an already-installed browser the new
+	// caching strategy. Lose this header and existing installs can stay
+	// pinned to an old worker, which is how a stale stylesheet survived a
+	// deploy before.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", cc)
+	}
+
+	body := rec.Body.String()
+	// Served from the top level, not /static/, so its scope covers the whole
+	// app rather than just /static/.
+	if !strings.Contains(body, "addEventListener('fetch'") {
+		t.Error("body does not look like the service worker")
+	}
+	// Guard the fix itself: a cache-first strategy here means CSS and htmx
+	// changes never reach an installed browser.
+	if !strings.Contains(body, "fetch(event.request)") {
+		t.Error("service worker does not appear to try the network first")
+	}
+}
