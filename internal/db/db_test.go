@@ -1206,3 +1206,89 @@ func TestViewsExposeSecondsAndMilliseconds(t *testing.T) {
 		t.Errorf("time_s = %d, want %d", s, recordedAt.Unix())
 	}
 }
+
+// TestViewTrendIsASevenDayMean checks the smoothing the trend line draws.
+// It uses RANGE rather than ROWS, so the window is seven days of elapsed
+// time — a gap in logging must shorten the window, not reach further back
+// for the same number of readings.
+func TestViewTrendIsASevenDayMean(t *testing.T) {
+	sqlDB := openTest(t)
+	// Four consecutive mornings, then one 30 days later whose window
+	// contains only itself.
+	seed := []struct {
+		at string
+		g  int64
+	}{
+		{"2026-08-01 07:00", 80000},
+		{"2026-08-02 07:00", 82000},
+		{"2026-08-03 07:00", 84000},
+		{"2026-08-04 07:00", 86000},
+		{"2026-09-10 07:00", 70000},
+	}
+	for _, s := range seed {
+		if _, err := CreateEntry(sqlDB, at(t, s.at), s.g, "", time.Now()); err != nil {
+			t.Fatalf("create %s: %v", s.at, err)
+		}
+	}
+
+	rows, err := sqlDB.Query(`SELECT recorded_at, weight_kg, trend_kg FROM v_entries ORDER BY time_s`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	var got []float64
+	for rows.Next() {
+		var recordedAt string
+		var weight, trend float64
+		if err := rows.Scan(&recordedAt, &weight, &trend); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, trend)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("got %d rows, want 5", len(got))
+	}
+
+	// Running mean while every reading is inside the trailing week.
+	want := []float64{80, 81, 82, 83}
+	for i, w := range want {
+		if diff := got[i] - w; diff > 0.0001 || diff < -0.0001 {
+			t.Errorf("trend[%d] = %v, want %v", i, got[i], w)
+		}
+	}
+	// The isolated reading a month later averages only itself.
+	if diff := got[4] - 70; diff > 0.0001 || diff < -0.0001 {
+		t.Errorf("trend after a month-long gap = %v, want 70 — the window reached past the gap", got[4])
+	}
+}
+
+func TestViewTrendIsPerPeriod(t *testing.T) {
+	sqlDB := openTest(t)
+	// A heavy evening reading must not drag the morning trend down.
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-01 07:00"), 80000, "", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-01 21:00"), 90000, "", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-02 07:00"), 82000, "", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var trend, trendAll float64
+	err := sqlDB.QueryRow(
+		`SELECT trend_kg, trend_all_kg FROM v_entries WHERE period = 'morning' ORDER BY time_s DESC LIMIT 1`,
+	).Scan(&trend, &trendAll)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if diff := trend - 81; diff > 0.0001 || diff < -0.0001 {
+		t.Errorf("morning trend = %v, want 81 (the two mornings only)", trend)
+	}
+	if diff := trendAll - 84; diff > 0.0001 || diff < -0.0001 {
+		t.Errorf("all-entries trend = %v, want 84 (every reading)", trendAll)
+	}
+}

@@ -102,8 +102,7 @@
             "showPoints": "always",
             "pointSize": 5,
             "spanNulls": true,
-            "fillOpacity": 0,
-            "axisSoftMin": null
+            "fillOpacity": 0
           }
         },
         "overrides": [
@@ -212,8 +211,7 @@
             "showPoints": "always",
             "pointSize": 5,
             "spanNulls": true,
-            "fillOpacity": 0,
-            "axisSoftMin": null
+            "fillOpacity": 0
           }
         },
         "overrides": [
@@ -322,8 +320,7 @@
             "showPoints": "always",
             "pointSize": 5,
             "spanNulls": true,
-            "fillOpacity": 0,
-            "axisSoftMin": null
+            "fillOpacity": 0
           }
         },
         "overrides": [
@@ -517,6 +514,546 @@
         },
         "tooltip": {
           "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "All weigh-ins + trend",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, trend_all_kg AS \"Trend\" FROM v_entries ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, trend_all_kg AS \"Trend\" FROM v_entries ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trend"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Morning"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Evening"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Morning only + trend",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, trend_kg AS \"Trend\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, trend_kg AS \"Trend\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trend"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Morning"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Evening only + trend",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 70
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, trend_kg AS \"Trend\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, trend_kg AS \"Trend\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trend"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Evening"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
           "sort": "none"
         }
       }

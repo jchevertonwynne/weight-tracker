@@ -10,9 +10,9 @@
 						<span id="graph-range-label">Last 30 days</span>
 						<span class="time-range-caret" aria-hidden="true">&#9662;</span>
 					</button>
-					<input type="hidden" id="graph-range-input" value="30">
-					<input type="hidden" id="graph-from-input">
-					<input type="hidden" id="graph-until-input">
+					<input type="hidden" id="graph-range-input" value="30" autocomplete="off">
+					<input type="hidden" id="graph-from-input" autocomplete="off">
+					<input type="hidden" id="graph-until-input" autocomplete="off">
 					<div class="time-range-popover" id="graph-range-popover" hidden>
 						<ul class="time-range-presets">
 							<li><button type="button" class="time-range-preset" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
@@ -35,9 +35,13 @@
 						</div>
 					</div>
 				</div>
+				<label class="field field-checkbox">
+					<input type="checkbox" id="graph-show-trend" checked autocomplete="off">
+					<span>Show trend line</span>
+				</label>
 				<label class="field">
 					<span>Series</span>
-					<select id="graph-series">
+					<select id="graph-series" autocomplete="off">
 						<option value="morning" selected>Morning only</option>
 						<option value="evening">Evening only</option>
 						<option value="morning-delta">Morning deltas</option>
@@ -61,9 +65,9 @@
 			     the time series panel. These chips are that label: same
 			     colour as the lines, and readable without hovering, which
 			     matters most on a phone where there is no hover at all. */}}
-			<ul class="marker-legend" aria-label="Chart markers">
+			<ul class="marker-legend" id="marker-legend" aria-label="Markers shown on the graph">
 				{{range .Markers}}
-					<li><span class="marker-legend-dot" aria-hidden="true"></span>{{.DateLabel}} · {{.Note}}</li>
+					<li data-ms="{{.DateMs}}"><span class="marker-legend-dot" aria-hidden="true"></span>{{.DateLabel}} · {{.Note}}</li>
 				{{end}}
 			</ul>
 		{{end}}

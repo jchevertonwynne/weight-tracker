@@ -145,24 +145,43 @@ var views = []struct {
 		// cannot drift silently.
 		name: "v_entries",
 		sql: `CREATE VIEW v_entries AS
+			WITH base AS (
+				SELECT
+					id,
+					recorded_at,
+					CAST(strftime('%s', recorded_at) AS INTEGER) * 1000 AS time_ms,
+					CAST(strftime('%s', recorded_at) AS INTEGER) AS time_s,
+					weight_g,
+					weight_g / 1000.0 AS weight_kg,
+					COALESCE(
+						NULLIF(period_override, ''),
+						CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) BETWEEN 4 AND 11
+							THEN 'morning' ELSE 'evening' END
+					) AS period,
+					date(
+						recorded_at, 'localtime',
+						CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) < 4
+							THEN '-1 day' ELSE '+0 days' END
+					) AS logical_date
+				FROM entries
+			)
 			SELECT
-				id,
-				recorded_at,
-				CAST(strftime('%s', recorded_at) AS INTEGER) * 1000 AS time_ms,
-				CAST(strftime('%s', recorded_at) AS INTEGER) AS time_s,
-				weight_g,
-				weight_g / 1000.0 AS weight_kg,
-				COALESCE(
-					NULLIF(period_override, ''),
-					CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) BETWEEN 4 AND 11
-						THEN 'morning' ELSE 'evening' END
-				) AS period,
-				date(
-					recorded_at, 'localtime',
-					CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) < 4
-						THEN '-1 day' ELSE '+0 days' END
-				) AS logical_date
-			FROM entries`,
+				*,
+				-- Trailing 7-day mean, the smoothing the old chart drew. RANGE
+				-- rather than ROWS so the window is real elapsed time, not a
+				-- sample count: a gap in logging shortens the window instead of
+				-- silently reaching further back for the same 7 readings.
+				AVG(weight_kg) OVER (
+					PARTITION BY period ORDER BY time_s
+					RANGE BETWEEN 604800 PRECEDING AND CURRENT ROW
+				) AS trend_kg,
+				-- The same smoothing ignoring period, for the panel that plots
+				-- morning and evening together.
+				AVG(weight_kg) OVER (
+					ORDER BY time_s
+					RANGE BETWEEN 604800 PRECEDING AND CURRENT ROW
+				) AS trend_all_kg
+			FROM base`,
 	},
 	{
 		// Day-over-day change against the previous reading of the same

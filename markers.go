@@ -15,6 +15,11 @@ type MarkerRow struct {
 	DateLabel string
 	DateInput string
 	Note      string
+	// DateMs is the marker's date as Unix milliseconds, so the graph's
+	// marker legend can hide the ones outside the visible time range —
+	// listing markers the chart isn't showing is what made the vertical
+	// lines hard to match to their labels.
+	DateMs int64
 }
 
 // buildMarkerRows assumes markers is newest-first (as returned by
@@ -27,6 +32,7 @@ func buildMarkerRows(markers []db.Marker) []MarkerRow {
 			DateLabel: m.Date.Format("Jan 2, 2006"),
 			DateInput: m.Date.Format("2006-01-02"),
 			Note:      m.Note,
+			DateMs:    m.Date.UnixMilli(),
 		}
 	}
 	return rows
