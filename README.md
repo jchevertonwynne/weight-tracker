@@ -50,7 +50,7 @@ Description=Weight tracker
 After=network.target
 
 [Service]
-ExecStart=/home/jcw/weight-tracker-arm64 -addr :8080 -db /home/jcw/weight-tracker.db
+ExecStart=/home/jcw/weight-tracker-arm64 -addr :8090 -db /home/jcw/weight-tracker.db
 Restart=on-failure
 User=jcw
 

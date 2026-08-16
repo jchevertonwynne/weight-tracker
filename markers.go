@@ -169,7 +169,7 @@ func (s *server) handleMarkerDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := db.DeleteMarker(s.db, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDeleteError(w, err)
 		return
 	}
 	s.renderMarkersList(w)

@@ -22,8 +22,11 @@ func (s *server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Must stay in sync with the unit <select> in templates/import.html and
+	// with the units importer.Parse accepts — "g" was missing here while the
+	// form offered it, so picking "grams" failed with a 400.
 	unit := r.FormValue("unit")
-	if unit != "kg" && unit != "lb" {
+	if unit != "kg" && unit != "lb" && unit != "g" {
 		http.Error(w, "invalid unit", http.StatusBadRequest)
 		return
 	}

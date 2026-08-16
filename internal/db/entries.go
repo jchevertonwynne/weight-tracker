@@ -51,10 +51,7 @@ func UpdateEntry(sqlDB *sql.DB, id int64, recordedAt time.Time, weightKg float64
 }
 
 func DeleteEntry(sqlDB *sql.DB, id int64) error {
-	if _, err := sqlDB.Exec(`DELETE FROM entries WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete entry %d: %w", id, err)
-	}
-	return nil
+	return deleteByID(sqlDB, "entries", id)
 }
 
 func GetEntry(sqlDB *sql.DB, id int64) (Entry, error) {

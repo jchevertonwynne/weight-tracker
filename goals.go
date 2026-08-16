@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -113,9 +112,9 @@ func (s *server) renderGoalsList(w http.ResponseWriter) {
 }
 
 func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
-	weightKg, err := strconv.ParseFloat(r.FormValue("weight_kg"), 64)
+	weightKg, err := parseWeightKg(r)
 	if err != nil {
-		http.Error(w, "invalid weight_kg", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	effectiveFrom, err := parseDateField(r, "effective_from")
@@ -175,9 +174,9 @@ func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	weightKg, err := strconv.ParseFloat(r.FormValue("weight_kg"), 64)
+	weightKg, err := parseWeightKg(r)
 	if err != nil {
-		http.Error(w, "invalid weight_kg", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	effectiveFrom, err := parseDateField(r, "effective_from")
@@ -199,7 +198,7 @@ func (s *server) handleGoalDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := db.DeleteGoal(s.db, id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeDeleteError(w, err)
 		return
 	}
 	s.renderGoalsList(w)

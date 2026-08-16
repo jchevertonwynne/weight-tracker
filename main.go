@@ -4,9 +4,12 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"flag"
+	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -161,6 +164,44 @@ func (s *server) handleServiceWorker(w http.ResponseWriter, _ *http.Request) {
 // edit/cancel-edit/update/delete routes.
 func parseIDPath(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
+}
+
+// writeDeleteError maps a failed Delete* onto a status code: a row that
+// isn't there is the client's problem (404), anything else is ours (500).
+// Without this, deleting an already-deleted id reported success.
+func writeDeleteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, db.ErrNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
+}
+
+// maxWeightKg is an upper sanity bound on any weight the app will store,
+// well clear of the heaviest recorded human but low enough to catch a
+// mistyped or unit-confused value.
+const maxWeightKg = 1000
+
+// parseWeightKg reads and validates the weight_kg form field shared by the
+// entry and goal forms. The inputs carry min/step attributes, but those are
+// client-side only — anything posting directly to the API could otherwise
+// store a negative, zero, or non-finite weight, which then flows into the
+// chart, the deltas, and the CSV export. importer.Parse already applies the
+// same positivity rule to bulk-imported rows.
+func parseWeightKg(r *http.Request) (float64, error) {
+	weightKg, err := strconv.ParseFloat(r.FormValue("weight_kg"), 64)
+	if err != nil {
+		return 0, fmt.Errorf("weight_kg is not a number: %w", err)
+	}
+	// ParseFloat happily accepts "NaN" and "Inf"; neither survives being
+	// averaged into a trend line.
+	if math.IsNaN(weightKg) || math.IsInf(weightKg, 0) {
+		return 0, fmt.Errorf("weight_kg must be a finite number")
+	}
+	if weightKg <= 0 || weightKg > maxWeightKg {
+		return 0, fmt.Errorf("weight_kg must be between 0 and %d, got %g", maxWeightKg, weightKg)
+	}
+	return weightKg, nil
 }
 
 // dateTimeLayout matches the concatenation of an <input type="date"> value

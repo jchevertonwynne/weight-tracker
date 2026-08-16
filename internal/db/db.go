@@ -8,11 +8,38 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// ErrNotFound is returned by the Delete* functions when no row with the
+// given id exists, so a handler can answer 404 rather than reporting
+// success for a row that was never there (e.g. a stale second tab deleting
+// the same entry twice).
+var ErrNotFound = errors.New("not found")
+
+// deleteByID runs a single-row delete and reports ErrNotFound when the
+// statement matched nothing. Shared by entries, goals, and markers, whose
+// delete paths are otherwise identical apart from the table name.
+func deleteByID(sqlDB *sql.DB, table string, id int64) error {
+	// table is never user input — every caller passes a literal — so
+	// interpolating it is safe; SQLite cannot parameterize table names.
+	res, err := sqlDB.Exec(`DELETE FROM `+table+` WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete from %s %d: %w", table, id, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected deleting from %s %d: %w", table, id, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("delete from %s %d: %w", table, id, ErrNotFound)
+	}
+	return nil
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS entries (

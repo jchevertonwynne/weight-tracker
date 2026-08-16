@@ -36,10 +36,7 @@ func UpdateGoal(sqlDB *sql.DB, id int64, weightKg float64, effectiveFrom time.Ti
 }
 
 func DeleteGoal(sqlDB *sql.DB, id int64) error {
-	if _, err := sqlDB.Exec(`DELETE FROM goals WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete goal %d: %w", id, err)
-	}
-	return nil
+	return deleteByID(sqlDB, "goals", id)
 }
 
 func GetGoal(sqlDB *sql.DB, id int64) (Goal, error) {

@@ -39,10 +39,7 @@ func UpdateMarker(sqlDB *sql.DB, id int64, date time.Time, note string) error {
 }
 
 func DeleteMarker(sqlDB *sql.DB, id int64) error {
-	if _, err := sqlDB.Exec(`DELETE FROM markers WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("delete marker %d: %w", id, err)
-	}
-	return nil
+	return deleteByID(sqlDB, "markers", id)
 }
 
 func GetMarker(sqlDB *sql.DB, id int64) (Marker, error) {
