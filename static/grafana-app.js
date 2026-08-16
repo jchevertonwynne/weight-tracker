@@ -23,16 +23,26 @@
 		'evening-delta': 5,
 	};
 
-	// Trend variants live at base + 10 (see grafana/dashboards/weight.json).
-	// A panel's series are fixed in its JSON, so showing or hiding the trend
-	// line means a different panel — a dashboard variable would be tidier but
-	// Grafana interpolates those in its frontend, which cannot be verified
-	// from a script the way a panel id can.
-	const TREND_PANEL_OFFSET = 10;
-	const TREND_CAPABLE = ['all', 'morning', 'evening'];
+	// A panel's series are fixed in its JSON, so each combination of the two
+	// toggles is its own panel (see grafana/dashboards/weight.json):
+	//
+	//   base +  0  raw only
+	//   base + 10  raw and trend
+	//   base + 20  trend only
+	//
+	// A dashboard variable would be tidier, but Grafana interpolates those in
+	// its frontend where a script cannot check them, whereas a panel id is
+	// verified against the dashboard JSON by
+	// TestDashboardHasEveryPanelTheAppCanRequest.
+	const RAW_AND_TREND_OFFSET = 10;
+	const TREND_ONLY_OFFSET = 20;
+	// The delta panels are bar charts of day-over-day change; neither a
+	// rolling mean nor a "raw" variant means anything for them.
+	const TOGGLEABLE = ['all', 'morning', 'evening'];
 
 	const seriesSelect = document.getElementById('graph-series');
 	const trendCheckbox = document.getElementById('graph-show-trend');
+	const rawCheckbox = document.getElementById('graph-show-raw');
 	const markerLegend = document.getElementById('marker-legend');
 	const rangeInput = document.getElementById('graph-range-input');
 	const fromInput = document.getElementById('graph-from-input');
@@ -95,10 +105,21 @@
 	function rebuild() {
 		const series = seriesSelect.value;
 		let panelId = PANEL_IDS[series] || PANEL_IDS.all;
-		// The delta panels are bar charts of day-over-day change; a rolling
-		// mean of them is not a thing, so the toggle simply does not apply.
-		if (trendCheckbox && trendCheckbox.checked && TREND_CAPABLE.includes(series)) {
-			panelId += TREND_PANEL_OFFSET;
+		if (TOGGLEABLE.includes(series)) {
+			let showRaw = rawCheckbox ? rawCheckbox.checked : true;
+			const showTrend = trendCheckbox ? trendCheckbox.checked : false;
+			// Hiding both would leave an empty chart, so raw wins and the
+			// checkbox is corrected to match — the UI should never claim a
+			// state the graph is not in.
+			if (!showRaw && !showTrend) {
+				showRaw = true;
+				if (rawCheckbox) rawCheckbox.checked = true;
+			}
+			if (showRaw && showTrend) {
+				panelId += RAW_AND_TREND_OFFSET;
+			} else if (showTrend) {
+				panelId += TREND_ONLY_OFFSET;
+			}
 		}
 		const range = timeRange();
 		updateMarkerLegend(range);
@@ -119,6 +140,7 @@
 
 	seriesSelect.addEventListener('change', rebuild);
 	if (trendCheckbox) trendCheckbox.addEventListener('change', rebuild);
+	if (rawCheckbox) rawCheckbox.addEventListener('change', rebuild);
 
 	// Follow the OS theme while the page is open, not just at load.
 	const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');

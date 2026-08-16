@@ -625,6 +625,13 @@ select:focus {
 	gap: 0.35rem;
 }
 
+/* An explicit display beats the [hidden] attribute's own display: none, so
+   markers filtered out of the visible range need this to actually vanish —
+   same reason .tab-panel[hidden] and .time-range-popover[hidden] exist. */
+.marker-legend li[hidden] {
+	display: none;
+}
+
 .marker-legend-dot {
 	width: 0.5rem;
 	height: 0.5rem;
