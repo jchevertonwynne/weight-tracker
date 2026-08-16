@@ -159,3 +159,71 @@ func TestDashboardQueriesUseSecondsNotMilliseconds(t *testing.T) {
 		}
 	}
 }
+
+// A marker's line is coloured by which annotation query returned it, and its
+// label in the app is coloured by the same index. Those two live in
+// different files — the dashboard JSON and style.css — so nothing stops one
+// being edited alone, and the symptom would be a line and its label
+// disagreeing about colour, which is precisely the association this exists
+// to provide.
+func TestMarkerAnnotationColoursCoverEveryIndex(t *testing.T) {
+	raw, err := os.ReadFile("grafana/dashboards/weight.json")
+	if err != nil {
+		t.Fatalf("read dashboard: %v", err)
+	}
+	var dashboard struct {
+		Annotations struct {
+			List []struct {
+				Name      string `json:"name"`
+				IconColor string `json:"iconColor"`
+				Target    struct {
+					QueryText string `json:"queryText"`
+				} `json:"target"`
+			} `json:"list"`
+		} `json:"annotations"`
+	}
+	if err := json.Unmarshal(raw, &dashboard); err != nil {
+		t.Fatalf("parse dashboard: %v", err)
+	}
+
+	// v_markers.color_index is id % 4, so all four must be claimed or some
+	// markers would draw no line at all.
+	indexes := map[string]bool{}
+	colours := map[string]string{}
+	for _, a := range dashboard.Annotations.List {
+		m := regexp.MustCompile(`color_index\s*=\s*(\d+)`).FindStringSubmatch(a.Target.QueryText)
+		if m == nil {
+			t.Errorf("annotation %q does not filter on color_index: %s", a.Name, a.Target.QueryText)
+			continue
+		}
+		if indexes[m[1]] {
+			t.Errorf("color_index %s is claimed by more than one annotation query", m[1])
+		}
+		indexes[m[1]] = true
+		if a.IconColor == "" {
+			t.Errorf("annotation %q has no iconColor, so its markers are indistinguishable", a.Name)
+		}
+		if prev, dup := colours[a.IconColor]; dup {
+			t.Errorf("annotations %q and %q share colour %s, so their markers cannot be told apart", prev, a.Name, a.IconColor)
+		}
+		colours[a.IconColor] = a.Name
+	}
+	for i := range 4 {
+		if !indexes[strconv.Itoa(i)] {
+			t.Errorf("no annotation query covers color_index %d; markers with that index would draw no line", i)
+		}
+	}
+
+	// The app needs a label colour for each of the same four indexes. Index
+	// 0 uses the base .marker-legend-dot rule; 1-3 need their own.
+	css, err := os.ReadFile("static/style.css")
+	if err != nil {
+		t.Fatalf("read stylesheet: %v", err)
+	}
+	for i := 1; i < 4; i++ {
+		rule := `.marker-legend-dot[data-color="` + strconv.Itoa(i) + `"]`
+		if !regexp.MustCompile(regexp.QuoteMeta(rule)).Match(css) {
+			t.Errorf("style.css has no %s rule, so those labels fall back to the wrong colour", rule)
+		}
+	}
+}

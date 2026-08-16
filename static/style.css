@@ -639,3 +639,18 @@ select:focus {
 	background: var(--marker);
 	flex: none;
 }
+
+/* One colour per marker, matching the annotation query its line is drawn
+   by — see v_markers.color_index and the annotations in
+   grafana/dashboards/weight.json. Keep the four in step with that palette. */
+.marker-legend-dot[data-color="1"] {
+	background: var(--marker-2);
+}
+
+.marker-legend-dot[data-color="2"] {
+	background: var(--marker-3);
+}
+
+.marker-legend-dot[data-color="3"] {
+	background: var(--marker-4);
+}

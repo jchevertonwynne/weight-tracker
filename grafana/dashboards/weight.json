@@ -16,9 +16,9 @@
   "annotations": {
     "list": [
       {
-        "name": "Markers",
+        "name": "Markers 1",
         "enable": true,
-        "hide": false,
+        "hide": true,
         "iconColor": "#ffab40",
         "datasource": {
           "type": "frser-sqlite-datasource",
@@ -26,8 +26,62 @@
         },
         "target": {
           "queryType": "table",
-          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers ORDER BY time",
-          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers ORDER BY time",
+          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 0 ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 0 ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      },
+      {
+        "name": "Markers 2",
+        "enable": true,
+        "hide": true,
+        "iconColor": "#f48fb1",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "weight-sqlite"
+        },
+        "target": {
+          "queryType": "table",
+          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 1 ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 1 ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      },
+      {
+        "name": "Markers 3",
+        "enable": true,
+        "hide": true,
+        "iconColor": "#4dd0e1",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "weight-sqlite"
+        },
+        "target": {
+          "queryType": "table",
+          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 2 ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 2 ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      },
+      {
+        "name": "Markers 4",
+        "enable": true,
+        "hide": true,
+        "iconColor": "#b39ddb",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "weight-sqlite"
+        },
+        "target": {
+          "queryType": "table",
+          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 3 ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers WHERE color_index = 3 ORDER BY time",
           "timeColumns": [
             "time"
           ]

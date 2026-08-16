@@ -224,9 +224,17 @@ var views = []struct {
 		name: "v_markers",
 		sql: `CREATE VIEW v_markers AS
 			SELECT
+				id,
 				CAST(strftime('%s', date) AS INTEGER) * 1000 AS time_ms,
 				CAST(strftime('%s', date) AS INTEGER) AS time_s,
-				note AS text
+				note AS text,
+				-- Which of four colours this marker draws in. Grafana takes an
+				-- annotation's colour from the query it came from, not from the
+				-- row, so the dashboard runs four annotation queries split on
+				-- this value. The app colours its marker labels by the same
+				-- rule, which is what lets a line and its label be matched by
+				-- eye — Grafana cannot draw the note on the plot itself.
+				id % 4 AS color_index
 			FROM markers`,
 	},
 }

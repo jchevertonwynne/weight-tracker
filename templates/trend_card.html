@@ -64,14 +64,16 @@
 		</div>
 
 		{{if .Markers}}
-			{{/* Grafana draws each marker as a vertical line but only reveals
-			     its note on hover — there is no always-on annotation label in
-			     the time series panel. These chips are that label: same
-			     colour as the lines, and readable without hovering, which
-			     matters most on a phone where there is no hover at all. */}}
+			{{/* Grafana draws each marker as a vertical line but cannot print
+			     its note on the plot — the time series panel has no always-on
+			     annotation label, and the text appears only on hover or tap.
+			     These are that label. Each dot matches the colour of its own
+			     line (see v_markers.color_index), so a line can be tied to a
+			     note by eye, which is the closest thing available to text on
+			     the graph. */}}
 			<ul class="marker-legend" id="marker-legend" aria-label="Markers shown on the graph">
 				{{range .Markers}}
-					<li data-ms="{{.DateMs}}"><span class="marker-legend-dot" aria-hidden="true"></span>{{.DateLabel}} · {{.Note}}</li>
+					<li data-ms="{{.DateMs}}"><span class="marker-legend-dot" data-color="{{.ColorIndex}}" aria-hidden="true"></span>{{.DateLabel}} · {{.Note}}</li>
 				{{end}}
 			</ul>
 		{{end}}
