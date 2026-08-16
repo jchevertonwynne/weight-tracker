@@ -63,6 +63,38 @@
 	const customApplyBtn = document.getElementById('custom-range-apply');
 	const presetButtons = Array.from(document.querySelectorAll('.time-range-preset'));
 
+	// syncRangeLabel renders the button's label and the active preset from
+	// the values that are actually submitted, rather than trusting them to
+	// have been set together.
+	//
+	// The label is static text in the template but the range is a hidden
+	// input, and browsers restore form-control state across a reload while
+	// leaving the text alone. A restored "90" therefore left the button
+	// still reading "Last 30 days" while the chart drew ninety — the control
+	// lying about what it was showing. Deriving one from the other makes
+	// that impossible, and autocomplete="off" on the controls stops the
+	// restore happening in the first place.
+	function syncRangeLabel() {
+		if (rangeInput.value === 'custom') {
+			presetButtons.forEach((b) => b.classList.remove('active'));
+			const from = fromInput.value;
+			const until = untilInput.value;
+			if (from && until) {
+				timeRangeLabel.textContent = `${formatDateLabel(parseDateInput(from))} – ${formatDateLabel(parseDateInput(until))}`;
+			} else if (from) {
+				timeRangeLabel.textContent = `Since ${formatDateLabel(parseDateInput(from))}`;
+			} else if (until) {
+				timeRangeLabel.textContent = `Until ${formatDateLabel(parseDateInput(until))}`;
+			}
+			return;
+		}
+		presetButtons.forEach((btn) => {
+			const match = btn.dataset.range === rangeInput.value;
+			btn.classList.toggle('active', match);
+			if (match) timeRangeLabel.textContent = btn.dataset.label;
+		});
+	}
+
 	function openTimeRangePopover() {
 		timeRangePopover.hidden = false;
 		timeRangeBtn.setAttribute('aria-expanded', 'true');
@@ -104,12 +136,10 @@
 
 	presetButtons.forEach((btn) => {
 		btn.addEventListener('click', () => {
-			presetButtons.forEach((b) => b.classList.remove('active'));
-			btn.classList.add('active');
 			rangeInput.value = btn.dataset.range;
 			fromInput.value = '';
 			untilInput.value = '';
-			timeRangeLabel.textContent = btn.dataset.label;
+			syncRangeLabel();
 			closeTimeRangePopover();
 			refreshChart();
 		});
@@ -117,18 +147,10 @@
 
 	customApplyBtn.addEventListener('click', () => {
 		if (!customFromInput.value && !customUntilInput.value) return;
-		presetButtons.forEach((b) => b.classList.remove('active'));
 		rangeInput.value = 'custom';
 		fromInput.value = customFromInput.value;
 		untilInput.value = customUntilInput.value;
-
-		if (customFromInput.value && customUntilInput.value) {
-			timeRangeLabel.textContent = `${formatDateLabel(parseDateInput(customFromInput.value))} – ${formatDateLabel(parseDateInput(customUntilInput.value))}`;
-		} else if (customFromInput.value) {
-			timeRangeLabel.textContent = `Since ${formatDateLabel(parseDateInput(customFromInput.value))}`;
-		} else {
-			timeRangeLabel.textContent = `Until ${formatDateLabel(parseDateInput(customUntilInput.value))}`;
-		}
+		syncRangeLabel();
 		closeTimeRangePopover();
 		refreshChart();
 	});
@@ -529,5 +551,6 @@
 	document.body.addEventListener('markers-changed', refreshChart);
 	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshChart);
 
+	syncRangeLabel();
 	refreshChart();
 })();

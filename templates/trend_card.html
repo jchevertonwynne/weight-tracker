@@ -9,9 +9,9 @@
 					<span id="time-range-label">Last 30 days</span>
 					<span class="time-range-caret" aria-hidden="true">&#9662;</span>
 				</button>
-				<input type="hidden" name="range" id="range-input" value="30">
-				<input type="hidden" name="from" id="from-input">
-				<input type="hidden" name="until" id="until-input">
+				<input type="hidden" name="range" id="range-input" value="30" autocomplete="off">
+				<input type="hidden" name="from" id="from-input" autocomplete="off">
+				<input type="hidden" name="until" id="until-input" autocomplete="off">
 				<div class="time-range-popover" id="time-range-popover" hidden>
 					<ul class="time-range-presets">
 						<li><button type="button" class="time-range-preset" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
@@ -24,11 +24,11 @@
 						<h3>Custom range</h3>
 						<label class="field">
 							<span>From</span>
-							<input type="date" id="custom-range-from">
+							<input type="date" id="custom-range-from" autocomplete="off">
 						</label>
 						<label class="field">
 							<span>Until</span>
-							<input type="date" id="custom-range-until">
+							<input type="date" id="custom-range-until" autocomplete="off">
 						</label>
 						<button type="button" class="btn btn-primary btn-small" id="custom-range-apply">Apply time range</button>
 					</div>
@@ -36,7 +36,7 @@
 			</div>
 			<label class="field">
 				<span>Series</span>
-				<select name="series">
+				<select name="series" autocomplete="off">
 					<option value="morning" selected>Morning only</option>
 					<option value="evening">Evening only</option>
 					<option value="morning-delta">Morning deltas</option>
@@ -47,11 +47,11 @@
 		</div>
 		<div class="chart-controls-row">
 			<label class="field field-checkbox">
-				<input type="checkbox" name="show-raw" checked>
+				<input type="checkbox" name="show-raw" checked autocomplete="off">
 				<span>Show raw data</span>
 			</label>
 			<label class="field field-checkbox">
-				<input type="checkbox" name="show-trend" checked>
+				<input type="checkbox" name="show-trend" checked autocomplete="off">
 				<span>Show trend line</span>
 			</label>
 		</div>
