@@ -145,15 +145,36 @@ func TestParseSplitDateTimeLayoutVariants(t *testing.T) {
 }
 
 func TestParseCombinedDatetimeLayoutVariants(t *testing.T) {
+	// want is the instant each value denotes. Layouts carrying no zone are
+	// parsed as local wall-clock time, so their expected instant is built in
+	// time.Local; the RFC3339 case carries an explicit offset and therefore
+	// denotes a fixed instant whatever zone the test runs in. Asserting on
+	// the instant rather than on a local hour keeps this true everywhere.
 	tests := []struct {
 		name  string
 		value string
+		want  time.Time
 	}{
-		{"RFC3339 with zone", "2026-08-14T07:00:00+01:00"},
-		{"ISO without zone", "2026-08-14T07:00:00"},
-		{"space separated", "2026-08-14 07:00:00"},
-		{"US two-digit year", "08/14/26 07:00:00"},
-		{"US four-digit year", "08/14/2026 07:00:00"},
+		{
+			"RFC3339 with zone", "2026-08-14T07:00:00+01:00",
+			time.Date(2026, 8, 14, 6, 0, 0, 0, time.UTC),
+		},
+		{
+			"ISO without zone", "2026-08-14T07:00:00",
+			time.Date(2026, 8, 14, 7, 0, 0, 0, time.Local),
+		},
+		{
+			"space separated", "2026-08-14 07:00:00",
+			time.Date(2026, 8, 14, 7, 0, 0, 0, time.Local),
+		},
+		{
+			"US two-digit year", "08/14/26 07:00:00",
+			time.Date(2026, 8, 14, 7, 0, 0, 0, time.Local),
+		},
+		{
+			"US four-digit year", "08/14/2026 07:00:00",
+			time.Date(2026, 8, 14, 7, 0, 0, 0, time.Local),
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,8 +183,8 @@ func TestParseCombinedDatetimeLayoutVariants(t *testing.T) {
 			if len(got.Rows) != 1 {
 				t.Fatalf("got %d rows (skipped %v), want 1", len(got.Rows), got.Skipped)
 			}
-			if got.Rows[0].RecordedAt.Hour() != 7 {
-				t.Errorf("hour = %d, want 7", got.Rows[0].RecordedAt.Hour())
+			if !got.Rows[0].RecordedAt.Equal(tc.want) {
+				t.Errorf("RecordedAt = %v, want the same instant as %v", got.Rows[0].RecordedAt, tc.want)
 			}
 		})
 	}

@@ -55,11 +55,14 @@ jobs:
       # morning/evening split hinges on a 4am boundary. The runner is UTC, so
       # re-run the suite under offsets that would expose a timezone
       # assumption — including a half-hour and a 45-minute offset.
+      # -count=1 is essential: Go's test cache does not key on TZ, so without
+      # it every zone after the first returns a cached pass and this step
+      # silently checks nothing.
       - name: Test in other timezones
         run: |
           for tz in Europe/London America/New_York Australia/Sydney Asia/Kathmandu; do
             echo "::group::TZ=$tz"
-            TZ=$tz go test ./... || exit 1
+            TZ=$tz go test -count=1 ./... || exit 1
             echo "::endgroup::"
           done
 
