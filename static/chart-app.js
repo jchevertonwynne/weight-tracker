@@ -74,17 +74,27 @@
 	// lying about what it was showing. Deriving one from the other makes
 	// that impossible, and autocomplete="off" on the controls stops the
 	// restore happening in the first place.
+	// A custom bound is either a calendar date or a relative expression like
+	// "now-5d". Only the date form is worth prettifying — a relative
+	// expression already reads as what the user typed, and echoing it back
+	// verbatim is also how a typo becomes visible, since the server treats an
+	// unparseable bound as simply unbounded on that side.
+	const dateOnlyBound = /^\d{4}-\d{2}-\d{2}$/;
+	function formatBound(value) {
+		return dateOnlyBound.test(value) ? formatDateLabel(parseDateInput(value)) : value;
+	}
+
 	function syncRangeLabel() {
 		if (rangeInput.value === 'custom') {
 			presetButtons.forEach((b) => b.classList.remove('active'));
 			const from = fromInput.value;
 			const until = untilInput.value;
 			if (from && until) {
-				timeRangeLabel.textContent = `${formatDateLabel(parseDateInput(from))} – ${formatDateLabel(parseDateInput(until))}`;
+				timeRangeLabel.textContent = `${formatBound(from)} – ${formatBound(until)}`;
 			} else if (from) {
-				timeRangeLabel.textContent = `Since ${formatDateLabel(parseDateInput(from))}`;
+				timeRangeLabel.textContent = `Since ${formatBound(from)}`;
 			} else if (until) {
-				timeRangeLabel.textContent = `Until ${formatDateLabel(parseDateInput(until))}`;
+				timeRangeLabel.textContent = `Until ${formatBound(until)}`;
 			}
 			return;
 		}

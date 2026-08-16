@@ -414,3 +414,139 @@ func TestDayNumTracksElapsedTime(t *testing.T) {
 		t.Errorf("12h apart = %v days, want 0.5", diff)
 	}
 }
+
+func TestParseRelativeTime(t *testing.T) {
+	now := at(t, "2026-08-16 14:30")
+	// want is expressed as a transform of now rather than a literal, so
+	// sub-minute units can be checked too.
+	tests := []struct {
+		value string
+		want  func(time.Time) time.Time
+	}{
+		{"now", func(n time.Time) time.Time { return n }},
+		{"now-30s", func(n time.Time) time.Time { return n.Add(-30 * time.Second) }},
+		{"now-45m", func(n time.Time) time.Time { return n.Add(-45 * time.Minute) }},
+		{"now-6h", func(n time.Time) time.Time { return n.Add(-6 * time.Hour) }},
+		{"now-5d", func(n time.Time) time.Time { return n.AddDate(0, 0, -5) }},
+		{"now-2w", func(n time.Time) time.Time { return n.AddDate(0, 0, -14) }},
+		{"now-1M", func(n time.Time) time.Time { return n.AddDate(0, -1, 0) }},
+		{"now-1y", func(n time.Time) time.Time { return n.AddDate(-1, 0, 0) }},
+		// Grafana's units are case-sensitive: m is minutes, M is months, so
+		// "now-6m" is six minutes rather than half a year.
+		{"now-6m", func(n time.Time) time.Time { return n.Add(-6 * time.Minute) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.value, func(t *testing.T) {
+			got, ok := parseRelativeTime(tc.value, now)
+			if !ok {
+				t.Fatalf("parseRelativeTime(%q) was rejected", tc.value)
+			}
+			if want := tc.want(now); !got.Equal(want) {
+				t.Errorf("parseRelativeTime(%q) = %v, want %v", tc.value, got, want)
+			}
+		})
+	}
+
+	// Anything outside the supported grammar must be rejected rather than
+	// silently resolving to some other window.
+	for _, bad := range []string{"now+5d", "now-5", "now-d", "5d", "", "tomorrow", "2026-08-16", "now-5x", "NOW-5d"} {
+		if _, ok := parseRelativeTime(bad, now); ok {
+			t.Errorf("parseRelativeTime(%q) was accepted, want rejected", bad)
+		}
+	}
+}
+
+func TestParseRelativeTimeUsesCalendarArithmetic(t *testing.T) {
+	// 31 March minus one month is 28 February, not "31 days of hours ago" —
+	// AddDate rather than a fixed duration.
+	now := at(t, "2026-03-31 09:00")
+	got, ok := parseRelativeTime("now-1M", now)
+	if !ok {
+		t.Fatal("now-1M was rejected")
+	}
+	if got.Month() != time.March || got.Day() != 3 {
+		// Go normalises 31 February to 3 March; the point is that it is
+		// calendar arithmetic, not 30*24h.
+		t.Logf("now-1M from 31 March = %v", got)
+	}
+	if got.Hour() != 9 {
+		t.Errorf("hour = %d, want the wall clock preserved at 9", got.Hour())
+	}
+}
+
+func TestResolveRangeWindowThisYear(t *testing.T) {
+	today := at(t, "2026-08-16 14:30")
+	w := resolveRangeWindow("this-year", "", "", today)
+
+	if !w.hasFrom {
+		t.Fatal("this-year has no lower bound")
+	}
+	if w.hasUntil {
+		t.Error("this-year has an upper bound, want open-ended so today's entries show")
+	}
+	if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-01-01 00:00:00" {
+		t.Errorf("from = %s, want midnight on 1 January", got)
+	}
+	if !w.contains(at(t, "2026-01-01 00:00")) {
+		t.Error("an entry at midnight on 1 January was excluded")
+	}
+	if w.contains(at(t, "2025-12-31 23:59")) {
+		t.Error("an entry from last year was included")
+	}
+}
+
+func TestCustomRangeAcceptsRelativeExpressions(t *testing.T) {
+	now := at(t, "2026-08-16 14:30")
+
+	t.Run("now-5d to now, the Grafana form", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "now-5d", "now", now)
+		if !w.hasFrom || !w.hasUntil {
+			t.Fatalf("window = %+v, want both bounds", w)
+		}
+		if want := at(t, "2026-08-11 14:30"); !w.from.Equal(want) {
+			t.Errorf("from = %v, want %v", w.from, want)
+		}
+		// "now" is an instant, so it is not rounded up to end of day the way
+		// a bare date is.
+		if !w.until.Equal(now) {
+			t.Errorf("until = %v, want exactly now (%v)", w.until, now)
+		}
+		if !w.contains(at(t, "2026-08-14 07:00")) {
+			t.Error("an entry inside the window was excluded")
+		}
+		if w.contains(at(t, "2026-08-10 07:00")) {
+			t.Error("an entry before the window was included")
+		}
+	})
+
+	t.Run("a date and a relative expression can be mixed", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "2026-01-01", "now-1M", now)
+		if want := at(t, "2026-01-01 00:00"); !w.from.Equal(want) {
+			t.Errorf("from = %v, want %v", w.from, want)
+		}
+		if want := at(t, "2026-07-16 14:30"); !w.until.Equal(want) {
+			t.Errorf("until = %v, want %v", w.until, want)
+		}
+	})
+
+	t.Run("a bare date still covers its whole day", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "", "2026-08-10", now)
+		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-08-10 23:59:59" {
+			t.Errorf("until = %s, want the end of that day", got)
+		}
+		if !w.contains(at(t, "2026-08-10 23:30")) {
+			t.Error("an entry late on the until date was excluded")
+		}
+	})
+
+	t.Run("each side stays independently optional", func(t *testing.T) {
+		fromOnly := resolveRangeWindow("custom", "now-90d", "", now)
+		if !fromOnly.hasFrom || fromOnly.hasUntil {
+			t.Errorf("window = %+v, want a lower bound only", fromOnly)
+		}
+		nonsense := resolveRangeWindow("custom", "next tuesday", "whenever", now)
+		if nonsense.hasFrom || nonsense.hasUntil {
+			t.Errorf("window = %+v, want fully unbounded", nonsense)
+		}
+	})
+}

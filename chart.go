@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -81,13 +83,19 @@ func (w rangeWindow) contains(t time.Time) bool {
 	return true
 }
 
-// resolveRangeWindow turns the "range" query param into a rangeWindow: a
-// preset day count ("7", "30", ...) becomes an inclusive trailing window
-// ending now; "all" (or anything else unrecognized) is unbounded; "custom"
-// reads the from/until query params instead.
+// resolveRangeWindow turns the "range" query param into a rangeWindow:
+//   - a preset day count ("7", "30", ...) is an inclusive trailing window
+//     ending now
+//   - "this-year" runs from midnight on 1 January
+//   - "custom" reads the from/until params instead
+//   - "all", or anything unrecognized, is unbounded
 func resolveRangeWindow(rangeParam, fromParam, untilParam string, today time.Time) rangeWindow {
-	if rangeParam == "custom" {
-		return customRangeWindow(fromParam, untilParam, today.Location())
+	switch rangeParam {
+	case "custom":
+		return customRangeWindow(fromParam, untilParam, today)
+	case "this-year":
+		start := time.Date(today.Year(), time.January, 1, 0, 0, 0, 0, today.Location())
+		return rangeWindow{from: start, hasFrom: true}
 	}
 	days, err := strconv.Atoi(rangeParam)
 	if err != nil || days <= 0 {
@@ -98,18 +106,86 @@ func resolveRangeWindow(rangeParam, fromParam, untilParam string, today time.Tim
 	return rangeWindow{from: startOfToday.AddDate(0, 0, -days+1), hasFrom: true}
 }
 
-// customRangeWindow parses the "from"/"until" query params (date-only, e.g.
-// "2026-01-01") for a custom range. Each is independently optional — a
-// blank or unparseable side just leaves that end of the range unbounded.
-// "until" is inclusive of the whole day.
-func customRangeWindow(fromParam, untilParam string, loc *time.Location) rangeWindow {
+// relativeTimePattern matches the subset of Grafana's relative time syntax
+// worth supporting here: "now", or "now-" a count and a unit. The units are
+// Grafana's own and are case-sensitive in the same way — "m" is minutes and
+// "M" is months, which is worth knowing before typing "now-6m" and getting
+// six minutes of chart.
+var relativeTimePattern = regexp.MustCompile(`^now(?:-(\d+)([smhdwMy]))?$`)
+
+// parseRelativeTime resolves an expression like "now-5d" against now.
+//
+// Days and larger use AddDate rather than a fixed multiple of 24h, so the
+// arithmetic is calendar-correct: "now-1M" lands on the same day of the
+// previous month whatever its length, and a day step across a DST boundary
+// stays at the same wall-clock time.
+func parseRelativeTime(value string, now time.Time) (time.Time, bool) {
+	m := relativeTimePattern.FindStringSubmatch(value)
+	if m == nil {
+		return time.Time{}, false
+	}
+	if m[1] == "" {
+		return now, true // bare "now"
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	switch m[2] {
+	case "s":
+		return now.Add(-time.Duration(n) * time.Second), true
+	case "m":
+		return now.Add(-time.Duration(n) * time.Minute), true
+	case "h":
+		return now.Add(-time.Duration(n) * time.Hour), true
+	case "d":
+		return now.AddDate(0, 0, -n), true
+	case "w":
+		return now.AddDate(0, 0, -7*n), true
+	case "M":
+		return now.AddDate(0, -n, 0), true
+	case "y":
+		return now.AddDate(-n, 0, 0), true
+	}
+	return time.Time{}, false
+}
+
+// parseRangeBound reads one side of a custom range, which may be either a
+// calendar date ("2026-01-01") or a relative expression ("now-5d").
+//
+// dateOnly reports which it was, because the two mean different things at
+// the "until" end: a bare date means the whole of that day, whereas an
+// instant means exactly itself.
+func parseRangeBound(value string, now time.Time) (parsed time.Time, dateOnly, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false, false
+	}
+	if t, isRelative := parseRelativeTime(value, now); isRelative {
+		return t, false, true
+	}
+	if t, err := time.ParseInLocation(dateOnlyLayout, value, now.Location()); err == nil {
+		return t, true, true
+	}
+	return time.Time{}, false, false
+}
+
+// customRangeWindow parses the "from"/"until" query params for a custom
+// range. Each side is independently optional — blank or unparseable just
+// leaves that end unbounded — and each accepts a date or a relative
+// expression, so "now-5d" to "now" works the way it does in Grafana.
+func customRangeWindow(fromParam, untilParam string, now time.Time) rangeWindow {
 	var w rangeWindow
-	if t, err := time.ParseInLocation(dateOnlyLayout, fromParam, loc); err == nil {
+	if t, _, ok := parseRangeBound(fromParam, now); ok {
 		w.from, w.hasFrom = t, true
 	}
-	if t, err := time.ParseInLocation(dateOnlyLayout, untilParam, loc); err == nil {
-		w.until = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, loc)
-		w.hasUntil = true
+	if t, dateOnly, ok := parseRangeBound(untilParam, now); ok {
+		if dateOnly {
+			// Inclusive of the whole day, so an entry logged that evening
+			// is not silently outside a range that names its date.
+			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, now.Location())
+		}
+		w.until, w.hasUntil = t, true
 	}
 	return w
 }
