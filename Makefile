@@ -14,7 +14,7 @@ PI_USER ?= jcw
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
 
-.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy help
+.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy deploy-grafana deploy-all help
 
 help:
 	@echo "make run         - go run the app locally on $(ADDR), attached to this terminal"
@@ -26,6 +26,8 @@ help:
 	@echo "make build       - build a local binary into $(BIN_DIR)/"
 	@echo "make build-pi    - cross-compile for Raspberry Pi (PI_ARCH=$(PI_ARCH))"
 	@echo "make deploy      - build-pi, then scp + restart the systemd service on PI_HOST=$(PI_HOST)"
+	@echo "make deploy-grafana - push Grafana provisioning + dashboard JSON, restart grafana"
+	@echo "make deploy-all  - deploy + deploy-grafana"
 	@echo "make clean       - stop the daemon, then remove build output and the local dev database"
 	@echo "make test        - go test ./... with the race detector"
 	@echo "make check       - everything CI runs: gofmt check, vet, tests"
@@ -92,6 +94,27 @@ ifeq ($(PI_ARCH),arm64)
 else
 	GOOS=linux GOARCH=arm GOARM=6 go build -o $(BIN_DIR)/$(BINARY)-armv6 .
 endif
+
+# Ships the Grafana side: env overrides, provisioning, and the dashboard
+# JSON. Separate from 'deploy' because the app is redeployed constantly and
+# this changes rarely; 'deploy-all' does both.
+deploy-grafana:
+	scp -r grafana/provisioning/datasources/weight-tracker.yaml $(PI_USER)@$(PI_HOST):/tmp/ds.yaml
+	scp -r grafana/provisioning/dashboards/weight-tracker.yaml $(PI_USER)@$(PI_HOST):/tmp/db.yaml
+	scp grafana/dashboards/weight.json $(PI_USER)@$(PI_HOST):/tmp/weight.json
+	scp grafana/grafana-server.env $(PI_USER)@$(PI_HOST):/tmp/grafana-server.env
+	ssh $(PI_USER)@$(PI_HOST) '\
+		sudo install -D -m 0644 /tmp/ds.yaml /etc/grafana/provisioning/datasources/weight-tracker.yaml; \
+		sudo install -D -m 0644 /tmp/db.yaml /etc/grafana/provisioning/dashboards/weight-tracker.yaml; \
+		sudo install -d -o grafana -g grafana /var/lib/grafana/dashboards; \
+		sudo install -o grafana -g grafana -m 0644 /tmp/weight.json /var/lib/grafana/dashboards/weight.json; \
+		sudo sed -i "/^# --- weight-tracker ---/,\$$d" /etc/default/grafana-server; \
+		printf "# --- weight-tracker ---\n" | sudo tee -a /etc/default/grafana-server > /dev/null; \
+		grep -v "^#" /tmp/grafana-server.env | grep . | sudo tee -a /etc/default/grafana-server > /dev/null; \
+		rm -f /tmp/ds.yaml /tmp/db.yaml /tmp/weight.json /tmp/grafana-server.env; \
+		sudo systemctl restart grafana-server'
+
+deploy-all: deploy deploy-grafana
 
 deploy: build-pi
 	scp $(BIN_DIR)/$(BINARY)-$(PI_ARCH) $(PI_USER)@$(PI_HOST):~/$(BINARY)-new

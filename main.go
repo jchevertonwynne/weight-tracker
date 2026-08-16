@@ -27,11 +27,16 @@ var tmpl = template.Must(template.ParseFS(templatesFS, "templates/*.html"))
 
 type server struct {
 	db *sql.DB
+	// grafanaEnabled gates the Graphs tab. With no Grafana to proxy to,
+	// showing a tab whose only content is a broken iframe helps nobody.
+	grafanaEnabled bool
 }
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "weight-tracker.db", "path to sqlite database file")
+	grafanaURL := flag.String("grafana", "http://127.0.0.1:3000",
+		"base URL of the Grafana to proxy under /grafana/ (empty to disable the Graphs tab)")
 	flag.Parse()
 
 	sqlDB, err := db.Open(*dbPath)
@@ -69,6 +74,16 @@ func main() {
 	mux.HandleFunc("POST /import", s.handleImport)
 	mux.HandleFunc("POST /settings/delete-all", s.handleDeleteAll)
 
+	if *grafanaURL != "" {
+		proxy, err := newGrafanaProxy(*grafanaURL)
+		if err != nil {
+			log.Fatalf("grafana proxy: %v", err)
+		}
+		mux.Handle("/grafana/", proxy)
+		s.grafanaEnabled = true
+		log.Printf("proxying /grafana/ to %s", *grafanaURL)
+	}
+
 	journalMode, err := db.JournalMode(sqlDB)
 	if err != nil {
 		log.Fatalf("read journal mode: %v", err)
@@ -104,19 +119,27 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	data := struct {
-		NowDate string
-		NowTime string
-		Rows    []Row
-		Goals   []GoalRow
-		Markers []MarkerRow
-		Summary WeeklySummary
+		NowDate        string
+		NowTime        string
+		Rows           []Row
+		Goals          []GoalRow
+		Markers        []MarkerRow
+		Summary        WeeklySummary
+		GrafanaEnabled bool
+		// EarliestMs is the oldest weigh-in as Unix milliseconds, so the
+		// Graphs tab's "All time" range can ask Grafana for exactly the
+		// span that holds data instead of guessing at some wide window and
+		// leaving the series squashed against one edge.
+		EarliestMs int64
 	}{
-		NowDate: now.Format("2006-01-02"),
-		NowTime: now.Format("15:04"),
-		Rows:    buildRows(entries),
-		Goals:   buildGoalRows(goals, now),
-		Markers: buildMarkerRows(markers),
-		Summary: buildWeeklySummary(entries, now),
+		NowDate:        now.Format("2006-01-02"),
+		NowTime:        now.Format("15:04"),
+		Rows:           buildRows(entries),
+		Goals:          buildGoalRows(goals, now),
+		Markers:        buildMarkerRows(markers),
+		Summary:        buildWeeklySummary(entries, now),
+		GrafanaEnabled: s.grafanaEnabled,
+		EarliestMs:     earliestMs(entries, now),
 	}
 	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -176,6 +199,19 @@ func (s *server) handleServiceWorker(w http.ResponseWriter, _ *http.Request) {
 // edit/cancel-edit/update/delete routes.
 func parseIDPath(r *http.Request) (int64, error) {
 	return strconv.ParseInt(r.PathValue("id"), 10, 64)
+}
+
+// earliestMs returns the oldest weigh-in as Unix milliseconds, falling back
+// to now when there are no entries at all — an empty chart over a zero-width
+// range is no worse than an empty chart over any other.
+func earliestMs(entries []db.Entry, now time.Time) int64 {
+	earliest := now
+	for _, e := range entries {
+		if e.RecordedAt.Before(earliest) {
+			earliest = e.RecordedAt
+		}
+	}
+	return earliest.UnixMilli()
 }
 
 // writeDeleteError maps a failed Delete* onto a status code: a row that

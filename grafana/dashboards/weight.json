@@ -1,0 +1,525 @@
+{
+  "uid": "weight-tracker",
+  "title": "Weight",
+  "tags": [
+    "weight-tracker"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Markers",
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "weight-sqlite"
+        },
+        "target": {
+          "queryType": "table",
+          "queryText": "SELECT time_s AS time, text FROM v_markers ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text FROM v_markers ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "All weigh-ins",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0,
+            "axisSoftMin": null
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Morning only",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Morning\" FROM v_entries WHERE period = 'morning' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0,
+            "axisSoftMin": null
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Evening only",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, weight_kg AS \"Evening\" FROM v_entries WHERE period = 'evening' ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, goal_kg AS \"Goal\" FROM v_goals ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "showPoints": "always",
+            "pointSize": 5,
+            "spanNulls": true,
+            "fillOpacity": 0,
+            "axisSoftMin": null
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Goal"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepAfter"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    6
+                  ]
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Morning deltas",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, delta_kg AS \"Morning delta\" FROM v_entry_deltas WHERE period = 'morning' AND delta_kg IS NOT NULL ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, delta_kg AS \"Morning delta\" FROM v_entry_deltas WHERE period = 'morning' AND delta_kg IS NOT NULL ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "barAlignment": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Evening deltas",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "weight-sqlite"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "weight-sqlite"
+          },
+          "queryType": "time series",
+          "queryText": "SELECT time_s AS time, delta_kg AS \"Evening delta\" FROM v_entry_deltas WHERE period = 'evening' AND delta_kg IS NOT NULL ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, delta_kg AS \"Evening delta\" FROM v_entry_deltas WHERE period = 'evening' AND delta_kg IS NOT NULL ORDER BY time",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "masskg",
+          "decimals": 1,
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "barAlignment": 0,
+            "gradientMode": "none"
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

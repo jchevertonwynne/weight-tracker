@@ -887,3 +887,322 @@ func TestBackupLeavesTheSourceUsable(t *testing.T) {
 		t.Errorf("source holds %d entries after backup, want 2", len(entries))
 	}
 }
+
+// TestViewPeriodMatchesGo is the guard against the one real hazard of
+// having Grafana compute periods in SQL: two implementations of the same
+// rule, drifting apart unnoticed. Every hour of the day is checked against
+// DetectPeriod, which is what the app itself uses.
+func TestViewPeriodMatchesGo(t *testing.T) {
+	sqlDB := openTest(t)
+	for hour := range 24 {
+		recordedAt := time.Date(2026, 8, 16, hour, 30, 0, 0, time.Local)
+		if _, err := CreateEntry(sqlDB, recordedAt, 80000, "", time.Now()); err != nil {
+			t.Fatalf("create entry at %02d:30: %v", hour, err)
+		}
+	}
+
+	rows, err := sqlDB.Query(`SELECT recorded_at, period FROM v_entries ORDER BY time_ms`)
+	if err != nil {
+		t.Fatalf("query view: %v", err)
+	}
+	defer rows.Close()
+
+	checked := 0
+	for rows.Next() {
+		var recordedAt, viewPeriod string
+		if err := rows.Scan(&recordedAt, &viewPeriod); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		parsed, err := parseStoredTime(recordedAt)
+		if err != nil {
+			t.Fatalf("parse %q: %v", recordedAt, err)
+		}
+		if want := DetectPeriod(parsed); viewPeriod != want {
+			t.Errorf("%s (local %02d:%02d): view says %q, DetectPeriod says %q",
+				recordedAt, parsed.Hour(), parsed.Minute(), viewPeriod, want)
+		}
+		checked++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if checked != 24 {
+		t.Errorf("checked %d hours, want 24", checked)
+	}
+}
+
+// TestViewLogicalDateMatchesGo does the same for the 4am-anchored logical
+// day that the overnight/daily pairing depends on.
+func TestViewLogicalDateMatchesGo(t *testing.T) {
+	sqlDB := openTest(t)
+	for hour := range 24 {
+		recordedAt := time.Date(2026, 8, 16, hour, 30, 0, 0, time.Local)
+		if _, err := CreateEntry(sqlDB, recordedAt, 80000, "", time.Now()); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	rows, err := sqlDB.Query(`SELECT recorded_at, logical_date FROM v_entries ORDER BY time_ms`)
+	if err != nil {
+		t.Fatalf("query view: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var recordedAt, viewDate string
+		if err := rows.Scan(&recordedAt, &viewDate); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		parsed, err := parseStoredTime(recordedAt)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		// The same rule logicalDate applies in the main package: before 4am
+		// belongs to the previous calendar date.
+		want := parsed
+		if want.Hour() < 4 {
+			want = want.AddDate(0, 0, -1)
+		}
+		if got, wantStr := viewDate, want.Format("2006-01-02"); got != wantStr {
+			t.Errorf("%s (local %02d:%02d): view logical_date %s, want %s",
+				recordedAt, parsed.Hour(), parsed.Minute(), got, wantStr)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+}
+
+func TestViewEntriesExposesKilograms(t *testing.T) {
+	sqlDB := openTest(t)
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82437, "", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var weightKg float64
+	var timeMs int64
+	err := sqlDB.QueryRow(`SELECT weight_kg, time_ms FROM v_entries`).Scan(&weightKg, &timeMs)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if weightKg != 82.437 {
+		t.Errorf("weight_kg = %v, want 82.437 — the view presents kilograms whatever the column stores", weightKg)
+	}
+	if want := at(t, "2026-08-16 07:30").UnixMilli(); timeMs != want {
+		t.Errorf("time_ms = %d, want %d", timeMs, want)
+	}
+}
+
+func TestViewEntriesHonoursPeriodOverride(t *testing.T) {
+	sqlDB := openTest(t)
+	// 09:00 auto-detects morning; the override must win in the view too.
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 09:00"), 82000, "evening", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var period string
+	if err := sqlDB.QueryRow(`SELECT period FROM v_entries`).Scan(&period); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if period != "evening" {
+		t.Errorf("period = %q, want evening", period)
+	}
+}
+
+func TestViewEntryDeltas(t *testing.T) {
+	sqlDB := openTest(t)
+	for _, e := range []struct {
+		at string
+		g  int64
+	}{
+		{"2026-08-14 07:00", 84000},
+		{"2026-08-14 21:00", 85000},
+		{"2026-08-16 07:00", 83000}, // skips a day
+		{"2026-08-16 21:00", 84500},
+	} {
+		if _, err := CreateEntry(sqlDB, at(t, e.at), e.g, "", time.Now()); err != nil {
+			t.Fatalf("create %s: %v", e.at, err)
+		}
+	}
+
+	rows, err := sqlDB.Query(`SELECT period, delta_kg FROM v_entry_deltas WHERE delta_kg IS NOT NULL ORDER BY time_ms`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string]float64{}
+	for rows.Next() {
+		var period string
+		var delta float64
+		if err := rows.Scan(&period, &delta); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[period] = delta
+	}
+	// Morning-to-morning across the skipped day, and evening-to-evening.
+	if d := got["morning"]; d < -1.0001 || d > -0.9999 {
+		t.Errorf("morning delta = %v, want -1", d)
+	}
+	if d := got["evening"]; d < -0.5001 || d > -0.4999 {
+		t.Errorf("evening delta = %v, want -0.5", d)
+	}
+	// The first reading of each period has no predecessor.
+	var nulls int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM v_entry_deltas WHERE delta_kg IS NULL`).Scan(&nulls); err != nil {
+		t.Fatalf("count nulls: %v", err)
+	}
+	if nulls != 2 {
+		t.Errorf("%d rows without a delta, want 2 (first morning and first evening)", nulls)
+	}
+}
+
+func TestViewGoalsExtendsToNow(t *testing.T) {
+	sqlDB := openTest(t)
+	if _, err := CreateGoal(sqlDB, 80000, at(t, "2026-01-01 00:00"), time.Now()); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-06-01 00:00"), time.Now()); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+
+	rows, err := sqlDB.Query(`SELECT time_ms, goal_kg FROM v_goals ORDER BY time_ms`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	type pt struct {
+		ms int64
+		kg float64
+	}
+	var pts []pt
+	for rows.Next() {
+		var p pt
+		if err := rows.Scan(&p.ms, &p.kg); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		pts = append(pts, p)
+	}
+	// Two goal starts plus one trailing point carrying the newest goal.
+	if len(pts) != 3 {
+		t.Fatalf("got %d points, want 3: %+v", len(pts), pts)
+	}
+	if pts[len(pts)-1].kg != 78 {
+		t.Errorf("trailing point = %v kg, want the newest goal (78)", pts[len(pts)-1].kg)
+	}
+	if pts[len(pts)-1].ms <= pts[1].ms {
+		t.Error("trailing point is not after the newest goal's start; a step line would have nothing to extend along")
+	}
+}
+
+func TestViewGoalsIsEmptyWithNoGoals(t *testing.T) {
+	sqlDB := openTest(t)
+	var n int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM v_goals`).Scan(&n); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("got %d rows, want none", n)
+	}
+}
+
+func TestViewMarkers(t *testing.T) {
+	sqlDB := openTest(t)
+	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "started cutting", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var timeMs int64
+	var text string
+	if err := sqlDB.QueryRow(`SELECT time_ms, text FROM v_markers`).Scan(&timeMs, &text); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if text != "started cutting" {
+		t.Errorf("text = %q", text)
+	}
+	if want := at(t, "2026-08-10 00:00").UnixMilli(); timeMs != want {
+		t.Errorf("time_ms = %d, want %d", timeMs, want)
+	}
+}
+
+func TestViewsAreRecreatedOnEveryOpen(t *testing.T) {
+	// The definitions live in Go and are refreshed on open, so a database
+	// carrying an older definition picks the current one up rather than
+	// needing a migration.
+	path := filepath.Join(t.TempDir(), "test.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := first.Exec(`DROP VIEW v_entries`); err != nil {
+		t.Fatalf("drop view: %v", err)
+	}
+	if _, err := first.Exec(`CREATE VIEW v_entries AS SELECT 1 AS stale`); err != nil {
+		t.Fatalf("install stale view: %v", err)
+	}
+	first.Close()
+
+	second, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer second.Close()
+	// The real definition has a weight_kg column; the stale one does not.
+	if _, err := second.Query(`SELECT weight_kg FROM v_entries`); err != nil {
+		t.Errorf("view was not refreshed on open: %v", err)
+	}
+}
+
+// TestViewsExposeSecondsAndMilliseconds pins the pair of time columns. The
+// seconds one exists because frser-sqlite-datasource overflows on
+// milliseconds and plots the series more than a century out; losing it
+// would break every dashboard panel while every Go test still passed.
+func TestViewsExposeSecondsAndMilliseconds(t *testing.T) {
+	sqlDB := openTest(t)
+	recordedAt := at(t, "2026-08-16 07:30")
+	if _, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now()); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "note", time.Now()); err != nil {
+		t.Fatalf("create marker: %v", err)
+	}
+
+	for _, view := range []string{"v_entries", "v_entry_deltas", "v_goals", "v_markers"} {
+		t.Run(view, func(t *testing.T) {
+			rows, err := sqlDB.Query(`SELECT time_ms, time_s FROM ` + view)
+			if err != nil {
+				t.Fatalf("query %s: %v", view, err)
+			}
+			defer rows.Close()
+			n := 0
+			for rows.Next() {
+				var ms, s int64
+				if err := rows.Scan(&ms, &s); err != nil {
+					t.Fatalf("scan: %v", err)
+				}
+				if ms != s*1000 {
+					t.Errorf("time_ms=%d but time_s=%d; they must describe the same instant", ms, s)
+				}
+				if s < 1_000_000_000 || s > 10_000_000_000 {
+					t.Errorf("time_s=%d is not a plausible Unix seconds value — a milliseconds value here is what broke the panels", s)
+				}
+				n++
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("rows: %v", err)
+			}
+			if n == 0 {
+				t.Errorf("%s returned no rows", view)
+			}
+		})
+	}
+
+	// And the entry's seconds value really is the entry's timestamp.
+	var s int64
+	if err := sqlDB.QueryRow(`SELECT time_s FROM v_entries`).Scan(&s); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if s != recordedAt.Unix() {
+		t.Errorf("time_s = %d, want %d", s, recordedAt.Unix())
+	}
+}

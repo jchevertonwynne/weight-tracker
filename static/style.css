@@ -571,3 +571,34 @@ select:focus {
 	font-size: 1.1rem;
 	font-weight: 500;
 }
+
+/* The embedded Grafana panel. A fixed aspect box rather than a fixed
+   height so the panel keeps usable proportions from a phone up to a
+   desktop; Grafana renders to whatever box it is given. */
+.graph-frame-wrap {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 16 / 10;
+	min-height: 260px;
+	border-radius: 6px;
+	overflow: hidden;
+	background: var(--surface-alt, transparent);
+}
+
+.graph-frame-wrap iframe {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	border: 0;
+}
+
+@media (min-width: 700px) {
+	.graph-frame-wrap {
+		aspect-ratio: 21 / 9;
+	}
+}
+
+.graph-hint {
+	margin-top: 0.75rem;
+}

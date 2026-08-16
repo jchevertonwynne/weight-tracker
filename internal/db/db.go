@@ -105,7 +105,123 @@ func Open(path string) (*sql.DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate weights to grams: %w", err)
 	}
+	// Views come last: they read the post-migration column names.
+	if err := applyViews(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("apply views: %w", err)
+	}
 	return sqlDB, nil
+}
+
+// views are the stable query surface for anything outside this app —
+// currently Grafana dashboards, which query them through the SQLite
+// datasource. They exist so a schema change is not automatically a broken
+// dashboard: the kilogram-to-gram migration would have silently broken
+// every panel that referenced entries.weight_kg, whereas a view can absorb
+// that and keep presenting kilograms.
+//
+// They are dropped and recreated on every open rather than versioned. A
+// view holds no data, so recreating costs nothing and guarantees the
+// definition always matches the binary that is running — no migration step
+// to forget.
+//
+// Kilograms, not grams, on purpose: the database's internal representation
+// is an implementation detail, and a dashboard axis wants the unit a person
+// reads.
+//
+// Two time columns, because the consumers disagree: time_ms is Unix
+// milliseconds, the generally useful form, while time_s is Unix seconds
+// because that is what frser-sqlite-datasource expects from an integer
+// time column — handed milliseconds it overflows and plots the series in
+// the 1890s. Dashboards select time_s AS time.
+var views = []struct {
+	name string
+	sql  string
+}{
+	{
+		// period and logical_date duplicate DetectPeriod and logicalDate.
+		// TestViewPeriodMatchesGo and TestViewLogicalDateMatchesGo compare
+		// the two implementations across every hour of the day so the pair
+		// cannot drift silently.
+		name: "v_entries",
+		sql: `CREATE VIEW v_entries AS
+			SELECT
+				id,
+				recorded_at,
+				CAST(strftime('%s', recorded_at) AS INTEGER) * 1000 AS time_ms,
+				CAST(strftime('%s', recorded_at) AS INTEGER) AS time_s,
+				weight_g,
+				weight_g / 1000.0 AS weight_kg,
+				COALESCE(
+					NULLIF(period_override, ''),
+					CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) BETWEEN 4 AND 11
+						THEN 'morning' ELSE 'evening' END
+				) AS period,
+				date(
+					recorded_at, 'localtime',
+					CASE WHEN CAST(strftime('%H', recorded_at, 'localtime') AS INTEGER) < 4
+						THEN '-1 day' ELSE '+0 days' END
+				) AS logical_date
+			FROM entries`,
+	},
+	{
+		// Day-over-day change against the previous reading of the same
+		// period, matching what the chart's delta series plots.
+		name: "v_entry_deltas",
+		sql: `CREATE VIEW v_entry_deltas AS
+			SELECT
+				id,
+				time_ms,
+				time_s,
+				period,
+				weight_kg,
+				weight_kg - LAG(weight_kg) OVER (PARTITION BY period ORDER BY time_ms) AS delta_kg
+			FROM v_entries`,
+	},
+	{
+		// Each goal contributes a point at the moment it takes effect, and
+		// the newest goal gets a second point at "now" so a step line has
+		// somewhere to extend to rather than stopping at its start.
+		name: "v_goals",
+		sql: `CREATE VIEW v_goals AS
+			SELECT
+				CAST(strftime('%s', effective_from) AS INTEGER) * 1000 AS time_ms,
+				CAST(strftime('%s', effective_from) AS INTEGER) AS time_s,
+				weight_g / 1000.0 AS goal_kg
+			FROM goals
+			UNION ALL
+			SELECT CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+			       CAST(strftime('%s', 'now') AS INTEGER),
+			       goal_kg FROM (
+				SELECT weight_g / 1000.0 AS goal_kg
+				FROM goals
+				ORDER BY effective_from DESC
+				LIMIT 1
+			)`,
+	},
+	{
+		// Shaped for a Grafana annotation query, which wants a time column
+		// and a text column.
+		name: "v_markers",
+		sql: `CREATE VIEW v_markers AS
+			SELECT
+				CAST(strftime('%s', date) AS INTEGER) * 1000 AS time_ms,
+				CAST(strftime('%s', date) AS INTEGER) AS time_s,
+				note AS text
+			FROM markers`,
+	},
+}
+
+func applyViews(sqlDB *sql.DB) error {
+	for _, v := range views {
+		if _, err := sqlDB.Exec(`DROP VIEW IF EXISTS ` + v.name); err != nil {
+			return fmt.Errorf("drop view %s: %w", v.name, err)
+		}
+		if _, err := sqlDB.Exec(v.sql); err != nil {
+			return fmt.Errorf("create view %s: %w", v.name, err)
+		}
+	}
+	return nil
 }
 
 // applyPragmas configures the connection before any schema work, so the

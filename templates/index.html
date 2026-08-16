@@ -32,6 +32,8 @@
 			{{template "goals-list" .}}
 		</div>
 
+		{{template "graphs-tab" .}}
+
 		<div class="tab-panel" id="tab-history" hidden>
 			{{template "entries-list" .}}
 		</div>
@@ -47,6 +49,9 @@
 		<button type="button" class="tab-btn active" data-tab="log">
 			<span class="tab-icon">📝</span><span>Log</span>
 		</button>
+		<button type="button" class="tab-btn" data-tab="graphs">
+			<span class="tab-icon">📈</span><span>Graphs</span>
+		</button>
 		<button type="button" class="tab-btn" data-tab="history">
 			<span class="tab-icon">📋</span><span>History</span>
 		</button>
@@ -57,6 +62,7 @@
 
 	<script src="/static/chart.min.js"></script>
 	<script src="/static/chart-app.js"></script>
+	<script src="/static/grafana-app.js"></script>
 	<script src="/static/app.js"></script>
 </body>
 </html>

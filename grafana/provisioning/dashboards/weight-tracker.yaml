@@ -1,0 +1,23 @@
+# Dashboards are provisioned from JSON files kept in this repo, not authored
+# only in Grafana's own database. That means they are version-controlled,
+# reviewable in a diff, and restored automatically on a rebuild — the app's
+# own /backup.db covers the weigh-ins but knows nothing about Grafana.
+#
+# The trade is that provisioned dashboards are read-only in the UI. To
+# change a panel: edit it in Grafana, use the panel's "Copy JSON" (or the
+# dashboard's Export), paste it back into grafana/dashboards/weight.json,
+# and deploy.
+apiVersion: 1
+
+providers:
+  - name: weight-tracker
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    # Pick up edits to the JSON without a Grafana restart.
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

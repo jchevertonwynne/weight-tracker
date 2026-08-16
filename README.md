@@ -68,6 +68,55 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now weight-tracker
 ```
 
+## Graphs (Grafana)
+
+The Graphs tab embeds a Grafana panel. Grafana owns the visualisation, the
+app owns the data and the controls — the series `<select>` and time range
+picker just rewrite the iframe URL.
+
+Grafana binds to `127.0.0.1:3000` and the app reverse-proxies it at
+`/grafana/`, so:
+
+- the embed is same-origin — no `X-Frame-Options`, CSP or cookie fuss
+- iframe URLs are relative, so they work over the LAN, over Tailscale, and
+  on localhost without knowing the hostname
+- there is no second port open on the network
+
+Run the app with `-grafana ""` to disable the tab entirely.
+
+### How it fits together
+
+- **Datasource**: the SQLite file, read directly by
+  `frser-sqlite-datasource`. Safe alongside the running app because the
+  database is in WAL mode, so the reader never blocks the writer.
+- **Permissions**: a WAL *reader* must also write `-shm`/`-wal`, so the
+  database lives in `/var/lib/weight-tracker` (`jcw:grafana`, dir `2770`,
+  file `0660`) rather than a home directory. SQLite copies the main file's
+  mode onto its sidecar files, which is what makes that work.
+- **Views, not tables**: dashboards query `v_entries`, `v_entry_deltas`,
+  `v_goals` and `v_markers`. They present kilograms and Unix time whatever
+  the underlying columns do, so a migration like kilograms→grams cannot
+  silently break every panel. They are recreated on each startup, so the
+  definition always matches the running binary.
+- **Time columns**: views expose both `time_ms` and `time_s`. Use `time_s`
+  in dashboards — handed milliseconds, the SQLite plugin overflows and
+  plots the series in the 1890s.
+- **Panel ids are a contract**: `static/grafana-app.js` maps its series
+  select onto panel ids 1–5. Renumbering panels breaks the tab.
+
+### Changing a dashboard
+
+Dashboards are provisioned from `grafana/dashboards/weight.json` in this
+repo, so they are version-controlled and survive a rebuild — `/backup.db`
+covers the weigh-ins but knows nothing about Grafana. Provisioned
+dashboards are read-only in the UI, so to change one: edit it in Grafana,
+export the JSON, paste it back into that file, and `make deploy-grafana`.
+
+```sh
+make deploy-grafana   # provisioning + dashboard + env, then restart grafana
+make deploy-all       # the app and Grafana together
+```
+
 ## Backups
 
 Settings → **Download backup** (or `GET /backup.db`) returns a consistent

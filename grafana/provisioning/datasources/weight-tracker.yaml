@@ -1,0 +1,22 @@
+# Provisioned datasource: the app's SQLite file, read through the
+# frser-sqlite-datasource plugin.
+#
+# Grafana reads the same file the app writes. That is safe because the app
+# runs the database in WAL mode, so this reader never blocks the writer.
+# It does mean the grafana user needs group access to the file *and* write
+# access to the -wal/-shm alongside it, which is why the database lives in
+# /var/lib/weight-tracker (owner jcw, group grafana, dir 2770, file 0660)
+# rather than in a home directory.
+apiVersion: 1
+
+datasources:
+  - name: Weight tracker
+    uid: weight-sqlite
+    type: frser-sqlite-datasource
+    access: proxy
+    isDefault: true
+    # Dashboards query the v_* views rather than the tables directly, so a
+    # schema migration does not silently break every panel.
+    jsonData:
+      path: /var/lib/weight-tracker/weight-tracker.db
+    editable: false
