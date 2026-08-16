@@ -387,24 +387,6 @@ func TestHandleIndexRenders(t *testing.T) {
 	}
 }
 
-func TestHandleChartReturnsJSON(t *testing.T) {
-	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
-		t.Fatalf("create failed: %d", rec.Code)
-	}
-	rec := httptest.NewRecorder()
-	s.handleChart(rec, httptest.NewRequest(http.MethodGet, "/chart?range=all&series=all", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	if !strings.Contains(rec.Body.String(), `"hasData":true`) {
-		t.Errorf("body = %s, want hasData true", rec.Body)
-	}
-}
-
 func TestHandleDeleteAllClearsEverything(t *testing.T) {
 	s := newTestServer(t)
 	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {

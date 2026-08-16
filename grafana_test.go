@@ -72,7 +72,7 @@ func TestGrafanaProxyExplainsAnUnreachableBackend(t *testing.T) {
 	}
 }
 
-func TestGraphsTabRendersWhenGrafanaIsEnabled(t *testing.T) {
+func TestTrendCardRendersTheGrafanaPanel(t *testing.T) {
 	s := newTestServer(t)
 	s.grafanaEnabled = true
 	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
@@ -84,23 +84,23 @@ func TestGraphsTabRendersWhenGrafanaIsEnabled(t *testing.T) {
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		`id="tab-graphs"`,
+		`id="trend-card"`,
 		`id="graph-frame"`,
-		`data-tab="graphs"`,
+		`id="graph-series"`,
 		`window.EARLIEST_MS =`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("rendered page is missing %q", want)
 		}
 	}
-	// The iframe must start blank; Grafana's bundle is only worth fetching
-	// once the tab is opened.
+	// The iframe starts blank and is pointed at a panel by
+	// grafana-app.js once it knows the range and theme.
 	if !strings.Contains(body, `src="about:blank"`) {
 		t.Error("iframe does not start blank, so Grafana loads on every page view")
 	}
 }
 
-func TestGraphsTabExplainsItselfWhenGrafanaIsDisabled(t *testing.T) {
+func TestTrendCardExplainsItselfWhenGrafanaIsDisabled(t *testing.T) {
 	s := newTestServer(t) // grafanaEnabled defaults to false
 	rec := httptest.NewRecorder()
 	s.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))

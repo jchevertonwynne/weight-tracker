@@ -1,4 +1,4 @@
-// Drives the embedded Grafana panel on the Graphs tab.
+// Drives the embedded Grafana panel in the trend card.
 //
 // Nothing here draws anything: the app owns the controls (which are far
 // better on a phone than Grafana's own time picker in a narrow iframe) and
@@ -6,7 +6,7 @@
 // iframe URL.
 (function () {
 	const frame = document.getElementById('graph-frame');
-	if (!frame) return; // Grafana disabled, or the tab was not rendered
+	if (!frame) return; // Grafana disabled, so the card renders an explanation instead
 
 	const DASHBOARD = '/grafana/d-solo/weight-tracker/weight';
 
@@ -79,8 +79,6 @@
 	darkQuery.addEventListener('change', rebuild);
 
 	// --- time range picker -------------------------------------------------
-	// Same interaction as the trend card's picker, driving the iframe instead
-	// of a fetch.
 	const rangeBtn = document.getElementById('graph-range-btn');
 	const rangeLabel = document.getElementById('graph-range-label');
 	const popover = document.getElementById('graph-range-popover');
@@ -128,22 +126,12 @@
 		rebuild();
 	});
 
-	// The panel is only worth loading once the tab is actually opened —
-	// Grafana's bundle is heavy, and most visits are to log a weigh-in.
-	let loaded = false;
-	document.querySelectorAll('.tab-btn').forEach((btn) => {
-		btn.addEventListener('click', () => {
-			if (btn.dataset.tab === 'graphs' && !loaded) {
-				loaded = true;
-				rebuild();
-			}
-		});
-	});
+	// The trend card is the first thing on the default tab, so the panel
+	// loads straight away rather than waiting for an interaction.
+	rebuild();
 
 	// A weigh-in, goal or marker changing means the panel is out of date.
 	['entries-changed', 'goals-changed', 'markers-changed'].forEach((event) => {
-		document.body.addEventListener(event, () => {
-			if (loaded) rebuild();
-		});
+		document.body.addEventListener(event, rebuild);
 	});
 })();

@@ -602,3 +602,33 @@ select:focus {
 .graph-hint {
 	margin-top: 0.75rem;
 }
+
+/* Marker labels under the graph. Grafana draws each marker as a vertical
+   annotation line but only reveals its note on hover, and there is no
+   always-on annotation label in the time series panel — nor any hover at
+   all on a phone. These chips are that label, in the same colour as the
+   lines. */
+.marker-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.9rem;
+	margin: 0.75rem 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.8rem;
+	color: var(--on-surface-muted);
+}
+
+.marker-legend li {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+}
+
+.marker-legend-dot {
+	width: 0.5rem;
+	height: 0.5rem;
+	border-radius: 50%;
+	background: var(--marker);
+	flex: none;
+}

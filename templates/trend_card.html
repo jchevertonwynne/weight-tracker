@@ -1,63 +1,79 @@
 {{define "trend-card"}}
 <section class="card" id="trend-card">
 	<h2>Trend</h2>
-	<form id="chart-controls" class="chart-controls">
-		<div class="chart-controls-row">
-			<div class="field time-range-picker">
-				<span>Range</span>
-				<button type="button" class="time-range-btn" id="time-range-btn" aria-haspopup="true" aria-expanded="false">
-					<span id="time-range-label">Last 30 days</span>
-					<span class="time-range-caret" aria-hidden="true">&#9662;</span>
-				</button>
-				<input type="hidden" name="range" id="range-input" value="30">
-				<input type="hidden" name="from" id="from-input">
-				<input type="hidden" name="until" id="until-input">
-				<div class="time-range-popover" id="time-range-popover" hidden>
-					<ul class="time-range-presets">
-						<li><button type="button" class="time-range-preset" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
-						<li><button type="button" class="time-range-preset active" data-range="30" data-label="Last 30 days">Last 30 days</button></li>
-						<li><button type="button" class="time-range-preset" data-range="90" data-label="Last 90 days">Last 90 days</button></li>
-						<li><button type="button" class="time-range-preset" data-range="365" data-label="Last year">Last year</button></li>
-						<li><button type="button" class="time-range-preset" data-range="all" data-label="All time">All time</button></li>
-					</ul>
-					<div class="time-range-custom">
-						<h3>Custom range</h3>
-						<label class="field">
-							<span>From</span>
-							<input type="date" id="custom-range-from">
-						</label>
-						<label class="field">
-							<span>Until</span>
-							<input type="date" id="custom-range-until">
-						</label>
-						<button type="button" class="btn btn-primary btn-small" id="custom-range-apply">Apply time range</button>
+	{{if .GrafanaEnabled}}
+		<form id="graph-controls" class="chart-controls">
+			<div class="chart-controls-row">
+				<div class="field time-range-picker">
+					<span>Range</span>
+					<button type="button" class="time-range-btn" id="graph-range-btn" aria-haspopup="true" aria-expanded="false">
+						<span id="graph-range-label">Last 30 days</span>
+						<span class="time-range-caret" aria-hidden="true">&#9662;</span>
+					</button>
+					<input type="hidden" id="graph-range-input" value="30">
+					<input type="hidden" id="graph-from-input">
+					<input type="hidden" id="graph-until-input">
+					<div class="time-range-popover" id="graph-range-popover" hidden>
+						<ul class="time-range-presets">
+							<li><button type="button" class="time-range-preset" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
+							<li><button type="button" class="time-range-preset active" data-range="30" data-label="Last 30 days">Last 30 days</button></li>
+							<li><button type="button" class="time-range-preset" data-range="90" data-label="Last 90 days">Last 90 days</button></li>
+							<li><button type="button" class="time-range-preset" data-range="365" data-label="Last year">Last year</button></li>
+							<li><button type="button" class="time-range-preset" data-range="all" data-label="All time">All time</button></li>
+						</ul>
+						<div class="time-range-custom">
+							<h3>Custom range</h3>
+							<label class="field">
+								<span>From</span>
+								<input type="date" id="graph-custom-from">
+							</label>
+							<label class="field">
+								<span>Until</span>
+								<input type="date" id="graph-custom-until">
+							</label>
+							<button type="button" class="btn btn-primary btn-small" id="graph-custom-apply">Apply time range</button>
+						</div>
 					</div>
 				</div>
+				<label class="field">
+					<span>Series</span>
+					<select id="graph-series">
+						<option value="morning" selected>Morning only</option>
+						<option value="evening">Evening only</option>
+						<option value="morning-delta">Morning deltas</option>
+						<option value="evening-delta">Evening deltas</option>
+						<option value="all">All weigh-ins</option>
+					</select>
+				</label>
 			</div>
-			<label class="field">
-				<span>Series</span>
-				<select name="series">
-					<option value="morning" selected>Morning only</option>
-					<option value="evening">Evening only</option>
-					<option value="morning-delta">Morning deltas</option>
-					<option value="evening-delta">Evening deltas</option>
-					<option value="all">All weigh-ins</option>
-				</select>
-			</label>
+		</form>
+
+		{{/* Rendered by Grafana through this app's own /grafana/ proxy, so
+		     the URL stays relative and works over the LAN, over Tailscale,
+		     and on localhost alike. */}}
+		<div class="graph-frame-wrap">
+			<iframe id="graph-frame" title="Weight graph" src="about:blank"></iframe>
 		</div>
-		<div class="chart-controls-row">
-			<label class="field field-checkbox">
-				<input type="checkbox" name="show-raw" checked>
-				<span>Show raw data</span>
-			</label>
-			<label class="field field-checkbox">
-				<input type="checkbox" name="show-trend" checked>
-				<span>Show trend line</span>
-			</label>
-		</div>
-	</form>
-	<canvas id="weight-chart"></canvas>
-	<p class="empty" id="chart-empty" hidden></p>
-	<p class="empty" id="marker-note" hidden></p>
+
+		{{if .Markers}}
+			{{/* Grafana draws each marker as a vertical line but only reveals
+			     its note on hover — there is no always-on annotation label in
+			     the time series panel. These chips are that label: same
+			     colour as the lines, and readable without hovering, which
+			     matters most on a phone where there is no hover at all. */}}
+			<ul class="marker-legend" aria-label="Chart markers">
+				{{range .Markers}}
+					<li><span class="marker-legend-dot" aria-hidden="true"></span>{{.DateLabel}} · {{.Note}}</li>
+				{{end}}
+			</ul>
+		{{end}}
+
+		<p class="empty graph-hint">
+			Config lives in Grafana — <a href="/grafana/d/weight-tracker/weight" target="_blank" rel="noopener">open the dashboard</a> to edit panels.
+		</p>
+		<script>window.EARLIEST_MS = {{.EarliestMs}};</script>
+	{{else}}
+		<p class="empty">Grafana is not configured. Start the app with <code>-grafana http://127.0.0.1:3000</code> to show the trend graph.</p>
+	{{end}}
 </section>
 {{end}}

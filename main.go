@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"embed"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,8 +26,8 @@ var tmpl = template.Must(template.ParseFS(templatesFS, "templates/*.html"))
 
 type server struct {
 	db *sql.DB
-	// grafanaEnabled gates the Graphs tab. With no Grafana to proxy to,
-	// showing a tab whose only content is a broken iframe helps nobody.
+	// grafanaEnabled gates the trend graph. With no Grafana to proxy to,
+	// rendering a card whose only content is a broken iframe helps nobody.
 	grafanaEnabled bool
 }
 
@@ -36,7 +35,7 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "weight-tracker.db", "path to sqlite database file")
 	grafanaURL := flag.String("grafana", "http://127.0.0.1:3000",
-		"base URL of the Grafana to proxy under /grafana/ (empty to disable the Graphs tab)")
+		"base URL of the Grafana to proxy under /grafana/ (empty to disable the trend graph)")
 	flag.Parse()
 
 	sqlDB, err := db.Open(*dbPath)
@@ -50,7 +49,6 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 	mux.HandleFunc("GET /{$}", s.handleIndex)
-	mux.HandleFunc("GET /chart", s.handleChart)
 	mux.HandleFunc("GET /summary", s.handleSummary)
 	mux.HandleFunc("GET /sw.js", s.handleServiceWorker)
 	mux.HandleFunc("POST /entries", s.handleCreate)
@@ -127,7 +125,7 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Summary        WeeklySummary
 		GrafanaEnabled bool
 		// EarliestMs is the oldest weigh-in as Unix milliseconds, so the
-		// Graphs tab's "All time" range can ask Grafana for exactly the
+		// trend card's "All time" range can ask Grafana for exactly the
 		// span that holds data instead of guessing at some wide window and
 		// leaving the series squashed against one edge.
 		EarliestMs int64
@@ -142,41 +140,6 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		EarliestMs:     earliestMs(entries, now),
 	}
 	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-}
-
-// handleChart returns chart data as JSON for the client-side Chart.js
-// instance to render — no server-side pixel math or HTML fragment.
-func (s *server) handleChart(w http.ResponseWriter, r *http.Request) {
-	rangeParam := r.URL.Query().Get("range")
-	if rangeParam == "" {
-		rangeParam = "30"
-	}
-	seriesParam := r.URL.Query().Get("series")
-	if seriesParam == "" {
-		seriesParam = "all"
-	}
-	fromParam := r.URL.Query().Get("from")
-	untilParam := r.URL.Query().Get("until")
-	entries, err := db.ListEntries(s.db)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	goals, err := db.ListGoals(s.db)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	markers, err := db.ListMarkers(s.db)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	data := buildChartData(entries, goals, markers, rangeParam, seriesParam, fromParam, untilParam, time.Now())
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

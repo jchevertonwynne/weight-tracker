@@ -32,41 +32,6 @@ func buildMarkerRows(markers []db.Marker) []MarkerRow {
 	return rows
 }
 
-// MarkerPoint is a marker clipped to the chart's visible x-range, ready for
-// JSON serialization. ID is included so the client can pick a stable color
-// per marker (stable across range changes, unlike a position-based index).
-type MarkerPoint struct {
-	ID   int64  `json:"id"`
-	X    int64  `json:"x"`
-	Date string `json:"date"`
-	Note string `json:"note"`
-}
-
-// visibleMarkers filters markers to those falling within the calendar days
-// spanned by [from, until] and maps them to chart-ready points. Markers are
-// date-only, so comparing against whole calendar days (rather than the
-// exact instants of the first/last visible entries) avoids excluding a
-// marker set for the same day as a visible entry just because it's dated
-// earlier in that day than the entry's own timestamp.
-func visibleMarkers(markers []db.Marker, from, until time.Time) []MarkerPoint {
-	startOfDay := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, from.Location())
-	endOfDay := time.Date(until.Year(), until.Month(), until.Day(), 23, 59, 59, 999999999, until.Location())
-
-	var out []MarkerPoint
-	for _, m := range markers {
-		if m.Date.Before(startOfDay) || m.Date.After(endOfDay) {
-			continue
-		}
-		out = append(out, MarkerPoint{
-			ID:   m.ID,
-			X:    msOf(m.Date),
-			Date: formatDateLabel(m.Date),
-			Note: m.Note,
-		})
-	}
-	return out
-}
-
 // renderMarkersList re-renders the markers-list card and fires
 // markers-changed so the chart controls refresh themselves too.
 func (s *server) renderMarkersList(w http.ResponseWriter) {

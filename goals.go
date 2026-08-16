@@ -2,7 +2,6 @@ package main
 
 import (
 	"net/http"
-	"sort"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -39,59 +38,6 @@ func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
 		rows[i] = row
 	}
 	return rows
-}
-
-// GoalSegment is one time-bounded goal validity period: [From, Until).
-// A zero Until means open-ended (the most recent goal).
-type GoalSegment struct {
-	WeightG int64
-	From    time.Time
-	Until   time.Time
-}
-
-// buildGoalSegments turns goals (any order) into non-overlapping segments:
-// each goal is valid from its own EffectiveFrom until the next goal's
-// EffectiveFrom (exclusive).
-func buildGoalSegments(goals []db.Goal) []GoalSegment {
-	if len(goals) == 0 {
-		return nil
-	}
-	sorted := make([]db.Goal, len(goals))
-	copy(sorted, goals)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].EffectiveFrom.Before(sorted[j].EffectiveFrom)
-	})
-
-	segs := make([]GoalSegment, len(sorted))
-	for i, g := range sorted {
-		seg := GoalSegment{WeightG: g.WeightG, From: g.EffectiveFrom}
-		if i+1 < len(sorted) {
-			seg.Until = sorted[i+1].EffectiveFrom
-		}
-		segs[i] = seg
-	}
-	return segs
-}
-
-// clipGoalSegments returns the portion of each segment that overlaps
-// [from, until]; open-ended segments are closed off at until. Segments with
-// no overlap are dropped entirely.
-func clipGoalSegments(segs []GoalSegment, from, until time.Time) []GoalSegment {
-	var out []GoalSegment
-	for _, s := range segs {
-		segFrom, segUntil := s.From, s.Until
-		if segUntil.IsZero() || segUntil.After(until) {
-			segUntil = until
-		}
-		if segFrom.Before(from) {
-			segFrom = from
-		}
-		if !segFrom.Before(segUntil) {
-			continue
-		}
-		out = append(out, GoalSegment{WeightG: s.WeightG, From: segFrom, Until: segUntil})
-	}
-	return out
 }
 
 // renderGoalsList re-renders the goals-list card and fires goals-changed so

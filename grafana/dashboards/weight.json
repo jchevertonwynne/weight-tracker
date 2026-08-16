@@ -19,15 +19,15 @@
         "name": "Markers",
         "enable": true,
         "hide": false,
-        "iconColor": "rgba(255, 96, 96, 1)",
+        "iconColor": "#ffab40",
         "datasource": {
           "type": "frser-sqlite-datasource",
           "uid": "weight-sqlite"
         },
         "target": {
           "queryType": "table",
-          "queryText": "SELECT time_s AS time, text FROM v_markers ORDER BY time",
-          "rawQueryText": "SELECT time_s AS time, text FROM v_markers ORDER BY time",
+          "queryText": "SELECT time_s AS time, text, text AS title FROM v_markers ORDER BY time",
+          "rawQueryText": "SELECT time_s AS time, text, text AS title FROM v_markers ORDER BY time",
           "timeColumns": [
             "time"
           ]
