@@ -30,15 +30,9 @@
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
 
-	function formatDateInput(date) {
-		const pad = (n) => String(n).padStart(2, '0');
-		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-	}
-
-	// parseDateInput reads a <input type="date"> value ("2026-01-01") as a
-	// local date rather than UTC midnight — new Date('2026-01-01') parses as
-	// UTC, which can display as the previous day in negative UTC-offset
-	// zones.
+	// parseDateInput reads a "2026-01-01" bound as a local date rather than
+	// UTC midnight — new Date('2026-01-01') parses as UTC, which can display
+	// as the previous day in negative UTC-offset zones.
 	function parseDateInput(value) {
 		const [y, m, d] = value.split('-').map(Number);
 		return new Date(y, m - 1, d);
@@ -74,6 +68,31 @@
 	// lying about what it was showing. Deriving one from the other makes
 	// that impossible, and autocomplete="off" on the controls stops the
 	// restore happening in the first place.
+	// customValuesFor writes a preset out in the same syntax the custom boxes
+	// accept, so selecting one fills them in and tweaking an end becomes an
+	// edit rather than a retype. "now" is the default end for every range:
+	// it reads as the intent, and it keeps tracking rather than freezing on
+	// the date the box happened to be filled.
+	function customValuesFor(range) {
+		if (range === 'all') {
+			return { from: '', until: 'now' };
+		}
+		if (range === 'this-year') {
+			return { from: `${new Date().getFullYear()}-01-01`, until: 'now' };
+		}
+		return { from: `now-${range}d`, until: 'now' };
+	}
+
+	// syncCustomInputs mirrors the active range into the custom boxes. A
+	// custom range is left alone — the boxes are already the source of truth
+	// for it, and rewriting them would fight the user's own text.
+	function syncCustomInputs() {
+		if (rangeInput.value === 'custom') return;
+		const values = customValuesFor(rangeInput.value);
+		customFromInput.value = values.from;
+		customUntilInput.value = values.until;
+	}
+
 	// A custom bound is either a calendar date or a relative expression like
 	// "now-5d". Only the date form is worth prettifying — a relative
 	// expression already reads as what the user typed, and echoing it back
@@ -103,6 +122,7 @@
 			btn.classList.toggle('active', match);
 			if (match) timeRangeLabel.textContent = btn.dataset.label;
 		});
+		syncCustomInputs();
 	}
 
 	function openTimeRangePopover() {
@@ -118,16 +138,6 @@
 	timeRangeBtn.addEventListener('click', (event) => {
 		event.stopPropagation();
 		if (timeRangePopover.hidden) {
-			// Pre-fill custom from/until with the currently active range (or
-			// a trailing 30 days if a preset is active) so opening "Custom
-			// range" starts from something sensible rather than blank.
-			if (!customFromInput.value && !customUntilInput.value) {
-				const until = new Date();
-				const from = new Date(until);
-				from.setDate(from.getDate() - 30);
-				customUntilInput.value = formatDateInput(until);
-				customFromInput.value = formatDateInput(from);
-			}
 			openTimeRangePopover();
 		} else {
 			closeTimeRangePopover();

@@ -152,40 +152,49 @@ func parseRelativeTime(value string, now time.Time) (time.Time, bool) {
 
 // parseRangeBound reads one side of a custom range, which may be either a
 // calendar date ("2026-01-01") or a relative expression ("now-5d").
-//
-// dateOnly reports which it was, because the two mean different things at
-// the "until" end: a bare date means the whole of that day, whereas an
-// instant means exactly itself.
-func parseRangeBound(value string, now time.Time) (parsed time.Time, dateOnly, ok bool) {
+func parseRangeBound(value string, now time.Time) (time.Time, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Time{}, false, false
+		return time.Time{}, false
 	}
 	if t, isRelative := parseRelativeTime(value, now); isRelative {
-		return t, false, true
+		return t, true
 	}
 	if t, err := time.ParseInLocation(dateOnlyLayout, value, now.Location()); err == nil {
-		return t, true, true
+		return t, true
 	}
-	return time.Time{}, false, false
+	return time.Time{}, false
+}
+
+// startOfDay and endOfDay snap a bound to the day that contains it.
+func startOfDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func endOfDay(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 23, 59, 59, 999999999, t.Location())
 }
 
 // customRangeWindow parses the "from"/"until" query params for a custom
 // range. Each side is independently optional — blank or unparseable just
 // leaves that end unbounded — and each accepts a date or a relative
 // expression, so "now-5d" to "now" works the way it does in Grafana.
+//
+// Both ends are snapped to whole days: the start to 00:00 and the end to
+// 23:59:59.999. A range is a span of dates here, not of instants, so every
+// weigh-in on the named days is included — without this, "now-5d" run at
+// 14:30 would silently drop that morning's entry five days ago, and "now"
+// would drop this evening's. It does mean the sub-day units (s, m, h) round
+// to the same day boundaries as everything else.
 func customRangeWindow(fromParam, untilParam string, now time.Time) rangeWindow {
 	var w rangeWindow
-	if t, _, ok := parseRangeBound(fromParam, now); ok {
-		w.from, w.hasFrom = t, true
+	if t, ok := parseRangeBound(fromParam, now); ok {
+		w.from, w.hasFrom = startOfDay(t), true
 	}
-	if t, dateOnly, ok := parseRangeBound(untilParam, now); ok {
-		if dateOnly {
-			// Inclusive of the whole day, so an entry logged that evening
-			// is not silently outside a range that names its date.
-			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, now.Location())
-		}
-		w.until, w.hasUntil = t, true
+	if t, ok := parseRangeBound(untilParam, now); ok {
+		w.until, w.hasUntil = endOfDay(t), true
 	}
 	return w
 }

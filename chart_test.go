@@ -503,39 +503,55 @@ func TestCustomRangeAcceptsRelativeExpressions(t *testing.T) {
 		if !w.hasFrom || !w.hasUntil {
 			t.Fatalf("window = %+v, want both bounds", w)
 		}
-		if want := at(t, "2026-08-11 14:30"); !w.from.Equal(want) {
-			t.Errorf("from = %v, want %v", w.from, want)
+		// Both ends snap to whole days, so the range covers every weigh-in
+		// on the named dates rather than starting and ending at 14:30.
+		if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-08-11 00:00:00" {
+			t.Errorf("from = %s, want the start of that day", got)
 		}
-		// "now" is an instant, so it is not rounded up to end of day the way
-		// a bare date is.
-		if !w.until.Equal(now) {
-			t.Errorf("until = %v, want exactly now (%v)", w.until, now)
+		if got := w.until.Format("2006-01-02 15:04:05.000"); got != "2026-08-16 23:59:59.999" {
+			t.Errorf("until = %s, want the end of today", got)
 		}
-		if !w.contains(at(t, "2026-08-14 07:00")) {
-			t.Error("an entry inside the window was excluded")
+		// The entries at either edge that an instant-based window would drop.
+		if !w.contains(at(t, "2026-08-11 07:00")) {
+			t.Error("the morning weigh-in on the first day was excluded")
 		}
-		if w.contains(at(t, "2026-08-10 07:00")) {
+		if !w.contains(at(t, "2026-08-16 21:00")) {
+			t.Error("this evening's weigh-in was excluded")
+		}
+		if w.contains(at(t, "2026-08-10 21:00")) {
 			t.Error("an entry before the window was included")
 		}
 	})
 
 	t.Run("a date and a relative expression can be mixed", func(t *testing.T) {
 		w := resolveRangeWindow("custom", "2026-01-01", "now-1M", now)
-		if want := at(t, "2026-01-01 00:00"); !w.from.Equal(want) {
-			t.Errorf("from = %v, want %v", w.from, want)
+		if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-01-01 00:00:00" {
+			t.Errorf("from = %s", got)
 		}
-		if want := at(t, "2026-07-16 14:30"); !w.until.Equal(want) {
-			t.Errorf("until = %v, want %v", w.until, want)
+		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-07-16 23:59:59" {
+			t.Errorf("until = %s, want the end of that day", got)
 		}
 	})
 
-	t.Run("a bare date still covers its whole day", func(t *testing.T) {
-		w := resolveRangeWindow("custom", "", "2026-08-10", now)
-		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-08-10 23:59:59" {
-			t.Errorf("until = %s, want the end of that day", got)
+	t.Run("a bare date covers its whole day at both ends", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "2026-08-10", "2026-08-10", now)
+		if !w.contains(at(t, "2026-08-10 07:00")) {
+			t.Error("the morning entry was excluded from a single-day range")
 		}
-		if !w.contains(at(t, "2026-08-10 23:30")) {
-			t.Error("an entry late on the until date was excluded")
+		if !w.contains(at(t, "2026-08-10 21:00")) {
+			t.Error("the evening entry was excluded from a single-day range")
+		}
+		if w.contains(at(t, "2026-08-09 23:59")) || w.contains(at(t, "2026-08-11 00:00")) {
+			t.Error("a single-day range leaked into the neighbouring days")
+		}
+	})
+
+	t.Run("sub-day units round to the same day boundaries", func(t *testing.T) {
+		// A consequence of always snapping, and the reason it is documented:
+		// h/m/s are not useful for a tracker with two readings a day.
+		w := resolveRangeWindow("custom", "now-6h", "now", now)
+		if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-08-16 00:00:00" {
+			t.Errorf("from = %s, want the start of today", got)
 		}
 	})
 
