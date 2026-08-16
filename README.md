@@ -68,6 +68,33 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now weight-tracker
 ```
 
+## Backups
+
+Settings → **Download backup** (or `GET /backup.db`) returns a consistent
+snapshot of the whole database, taken with SQLite's `VACUUM INTO` — no need
+to stop the app, and unlike copying the file off disk it captures writes
+still sitting in the write-ahead log. The result is a single self-contained
+file with no companion `-wal`/`-shm`, so restoring is just:
+
+```sh
+sudo systemctl stop weight-tracker
+cp weight-tracker-backup-2026-08-16.db ~/weight-tracker.db
+rm -f ~/weight-tracker.db-wal ~/weight-tracker.db-shm
+sudo systemctl start weight-tracker
+```
+
+Prefer this over `export.csv` for backups: the CSV holds weigh-ins only,
+while the snapshot keeps goals, markers, period overrides and row ids too.
+
+To pull one from another machine on a schedule:
+
+```sh
+curl -f -o "weights-$(date +%F).db" http://jcwpi:8090/backup.db
+```
+
+The database runs in WAL mode, so a reader never blocks the writer and a
+crash mid-write replays the log rather than risking a torn database file.
+
 ## Upgrading
 
 Schema changes are applied automatically on startup, so upgrading is just

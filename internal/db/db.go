@@ -86,6 +86,11 @@ func Open(path string) (*sql.DB, error) {
 	// SQLITE_BUSY errors under htmx's concurrent request pattern.
 	sqlDB.SetMaxOpenConns(1)
 
+	if err := applyPragmas(sqlDB); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+
 	if _, err := sqlDB.Exec(schema); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
@@ -101,6 +106,62 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate weights to grams: %w", err)
 	}
 	return sqlDB, nil
+}
+
+// applyPragmas configures the connection before any schema work, so the
+// migrations below also run under the settings chosen here.
+func applyPragmas(sqlDB *sql.DB) error {
+	// A contended write waits rather than failing outright with SQLITE_BUSY.
+	// SetMaxOpenConns(1) already serializes this process's own queries, but
+	// nothing stops a second process — a shell running sqlite3, or an
+	// overlapping restart — from holding the write lock briefly.
+	if _, err := sqlDB.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		return fmt.Errorf("set busy_timeout: %w", err)
+	}
+
+	// WAL keeps a reader from blocking the writer and vice versa, which is
+	// what lets a backup read a consistent snapshot while a weigh-in is
+	// being logged. It also survives a crash mid-write by replaying the log
+	// rather than risking a torn main database file — the failure mode that
+	// matters on a Pi running off an SD card.
+	//
+	// journal_mode is a query: it reports the mode actually in effect, which
+	// is not necessarily WAL (it is unsupported on some network filesystems,
+	// and an in-memory database reports "memory"). The pragma is persisted
+	// in the database file itself, so this is a one-time upgrade rather than
+	// something re-applied on every open.
+	var journalMode string
+	if err := sqlDB.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&journalMode); err != nil {
+		return fmt.Errorf("set journal_mode: %w", err)
+	}
+	// Not an error if the filesystem refused WAL: the rollback journal is
+	// still correct, just less concurrent. JournalMode reports what stuck so
+	// the caller can log it.
+	return nil
+}
+
+// JournalMode reports the journaling mode in effect, so startup can log
+// whether WAL actually took.
+func JournalMode(sqlDB *sql.DB) (string, error) {
+	var mode string
+	if err := sqlDB.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		return "", fmt.Errorf("read journal_mode: %w", err)
+	}
+	return mode, nil
+}
+
+// BackupTo writes a consistent snapshot of the database to path using
+// VACUUM INTO, which reads through the same MVCC snapshot as any other
+// query — so the copy is internally consistent without stopping the app or
+// blocking writes. The output is a compacted, fully self-contained database
+// file: no companion -wal or -shm file to keep alongside it.
+//
+// path must not already exist; VACUUM INTO refuses to overwrite.
+func BackupTo(sqlDB *sql.DB, path string) error {
+	if _, err := sqlDB.Exec(`VACUUM INTO ?`, path); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", path, err)
+	}
+	return nil
 }
 
 // KgToGrams converts a kilogram value to whole grams, rounding to the

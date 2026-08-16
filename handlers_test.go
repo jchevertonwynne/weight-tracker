@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -427,5 +429,124 @@ func TestHandleDeleteAllClearsEverything(t *testing.T) {
 	markers, _ := db.ListMarkers(s.db)
 	if len(entries) != 0 || len(goals) != 0 || len(markers) != 0 {
 		t.Errorf("after delete-all: %d entries, %d goals, %d markers; want none", len(entries), len(goals), len(markers))
+	}
+}
+
+func TestHandleBackupServesARestorableDatabase(t *testing.T) {
+	s := newTestServer(t)
+	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+		t.Fatalf("create entry failed: %d", rec.Code)
+	}
+	markerForm := url.Values{"date": {"2026-08-10"}, "note": {"started cutting"}}
+	if rec := postForm(t, s.handleMarkerCreate, http.MethodPost, "/markers", markerForm); rec.Code != http.StatusOK {
+		t.Fatalf("create marker failed: %d", rec.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
+	}
+
+	if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.sqlite3" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, ".db") {
+		t.Errorf("Content-Disposition = %q, want a .db attachment", cd)
+	}
+	body := rec.Body.Bytes()
+	if got := rec.Header().Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length = %q, but body is %d bytes", got, len(body))
+	}
+	// Every SQLite file starts with this header string.
+	if !bytes.HasPrefix(body, []byte("SQLite format 3\x00")) {
+		t.Fatalf("body is not a SQLite database (first bytes: %q)", body[:min(16, len(body))])
+	}
+
+	// The real test: write the downloaded bytes out and open them as a
+	// database, the way restoring from this file would.
+	restoredPath := filepath.Join(t.TempDir(), "restored.db")
+	if err := os.WriteFile(restoredPath, body, 0o644); err != nil {
+		t.Fatalf("write downloaded bytes: %v", err)
+	}
+	restored, err := db.Open(restoredPath)
+	if err != nil {
+		t.Fatalf("open the downloaded database: %v", err)
+	}
+	defer restored.Close()
+
+	entries, err := db.ListEntries(restored)
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].WeightG != 82400 {
+		t.Errorf("restored entries = %+v, want one 82400 g entry", entries)
+	}
+	markers, err := db.ListMarkers(restored)
+	if err != nil {
+		t.Fatalf("list markers: %v", err)
+	}
+	if len(markers) != 1 || markers[0].Note != "started cutting" {
+		t.Errorf("restored markers = %+v, want the marker to survive", markers)
+	}
+}
+
+func TestHandleBackupOnAnEmptyDatabase(t *testing.T) {
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !bytes.HasPrefix(rec.Body.Bytes(), []byte("SQLite format 3\x00")) {
+		t.Error("empty-database backup is not a SQLite file")
+	}
+}
+
+func TestHandleBackupCleansUpItsStagingFile(t *testing.T) {
+	// The snapshot is written to a temp dir and streamed; nothing should be
+	// left behind once the response is done.
+	before, err := filepath.Glob(filepath.Join(os.TempDir(), "weight-tracker-backup*"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	after, err := filepath.Glob(filepath.Join(os.TempDir(), "weight-tracker-backup*"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("left %d staging directories behind: %v", len(after)-len(before), after)
+	}
+}
+
+func TestHandleBackupDoesNotDisturbTheLiveDatabase(t *testing.T) {
+	s := newTestServer(t)
+	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+		t.Fatalf("create failed: %d", rec.Code)
+	}
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("backup status = %d", rec.Code)
+	}
+	// Writes and reads still work afterwards.
+	form := entryForm("81.9")
+	form.Set("recorded_at_time", "21:00")
+	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
+		t.Errorf("create after backup failed: %d", rec.Code)
+	}
+	entries, err := db.ListEntries(s.db)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("live database holds %d entries after backup, want 2", len(entries))
 	}
 }

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -712,5 +713,177 @@ func TestMigrationFromTheOldestSchema(t *testing.T) {
 	// Both new columns must be writable on the doubly-migrated table.
 	if err := UpdateEntry(sqlDB, entries[0].ID, entries[0].RecordedAt, 81500, "evening"); err != nil {
 		t.Fatalf("update after migration: %v", err)
+	}
+}
+
+func TestOpenEnablesWAL(t *testing.T) {
+	sqlDB := openTest(t)
+	mode, err := JournalMode(sqlDB)
+	if err != nil {
+		t.Fatalf("journal mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal mode = %q, want wal", mode)
+	}
+}
+
+func TestWALPersistsAcrossReopen(t *testing.T) {
+	// journal_mode is stored in the database file, so a database created by
+	// an older build picks WAL up on its next open and keeps it thereafter.
+	path := filepath.Join(t.TempDir(), "test.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	first.Close()
+
+	second, err := Open(path)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	defer second.Close()
+	mode, err := JournalMode(second)
+	if err != nil {
+		t.Fatalf("journal mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal mode after reopen = %q, want wal", mode)
+	}
+}
+
+func TestBusyTimeoutIsSet(t *testing.T) {
+	sqlDB := openTest(t)
+	var timeout int
+	if err := sqlDB.QueryRow(`PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatalf("read busy_timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy_timeout = %d, want 5000", timeout)
+	}
+}
+
+func TestBackupToProducesARestorableCopy(t *testing.T) {
+	sqlDB := openTest(t)
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "evening", time.Now()); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "started cutting", time.Now()); err != nil {
+		t.Fatalf("create marker: %v", err)
+	}
+
+	backupPath := filepath.Join(t.TempDir(), "backup.db")
+	if err := BackupTo(sqlDB, backupPath); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+
+	// The snapshot must be a self-contained database: openable on its own,
+	// with no companion -wal file needed.
+	if _, err := os.Stat(backupPath + "-wal"); !os.IsNotExist(err) {
+		t.Errorf("backup left a -wal file alongside it; it should be self-contained")
+	}
+
+	restored, err := Open(backupPath)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer restored.Close()
+
+	entries, err := ListEntries(restored)
+	if err != nil {
+		t.Fatalf("list entries from backup: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("backup holds %d entries, want 1", len(entries))
+	}
+	if entries[0].WeightG != 82400 {
+		t.Errorf("backup entry = %d g, want 82400", entries[0].WeightG)
+	}
+	// Everything the CSV export cannot carry must survive too.
+	if entries[0].PeriodOverride != "evening" {
+		t.Errorf("backup lost the period override: %q", entries[0].PeriodOverride)
+	}
+	goals, err := ListGoals(restored)
+	if err != nil {
+		t.Fatalf("list goals from backup: %v", err)
+	}
+	if len(goals) != 1 || goals[0].WeightG != 78000 {
+		t.Errorf("backup goals = %+v, want one 78000 g goal", goals)
+	}
+	markers, err := ListMarkers(restored)
+	if err != nil {
+		t.Fatalf("list markers from backup: %v", err)
+	}
+	if len(markers) != 1 || markers[0].Note != "started cutting" {
+		t.Errorf("backup markers = %+v, want one 'started cutting' marker", markers)
+	}
+}
+
+func TestBackupCapturesWritesMadeAfterOpen(t *testing.T) {
+	// Under WAL a recent commit lives in the log rather than the main file,
+	// so a naive file copy could miss it. VACUUM INTO must not.
+	sqlDB := openTest(t)
+	for i := range 5 {
+		if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30").AddDate(0, 0, i), 82000, "", time.Now()); err != nil {
+			t.Fatalf("create entry %d: %v", i, err)
+		}
+	}
+	backupPath := filepath.Join(t.TempDir(), "backup.db")
+	if err := BackupTo(sqlDB, backupPath); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	restored, err := Open(backupPath)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer restored.Close()
+	entries, err := ListEntries(restored)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(entries) != 5 {
+		t.Errorf("backup holds %d entries, want all 5 including uncheckpointed writes", len(entries))
+	}
+}
+
+func TestBackupRefusesToOverwrite(t *testing.T) {
+	sqlDB := openTest(t)
+	path := filepath.Join(t.TempDir(), "existing.db")
+	if err := os.WriteFile(path, []byte("not a database"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	if err := BackupTo(sqlDB, path); err == nil {
+		t.Error("BackupTo overwrote an existing file, want an error")
+	}
+	// The original file must be untouched.
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(content) != "not a database" {
+		t.Errorf("existing file was modified: %q", content)
+	}
+}
+
+func TestBackupLeavesTheSourceUsable(t *testing.T) {
+	sqlDB := openTest(t)
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := BackupTo(sqlDB, filepath.Join(t.TempDir(), "backup.db")); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	// VACUUM must not have left the connection in a broken state.
+	if _, err := CreateEntry(sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
+		t.Errorf("write after backup: %v", err)
+	}
+	entries, err := ListEntries(sqlDB)
+	if err != nil {
+		t.Fatalf("list after backup: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("source holds %d entries after backup, want 2", len(entries))
 	}
 }

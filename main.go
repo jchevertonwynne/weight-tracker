@@ -64,11 +64,23 @@ func main() {
 	mux.HandleFunc("PUT /markers/{id}", s.handleMarkerUpdate)
 	mux.HandleFunc("DELETE /markers/{id}", s.handleMarkerDelete)
 	mux.HandleFunc("GET /export.csv", s.handleExport)
+	mux.HandleFunc("GET /backup.db", s.handleBackup)
 	mux.HandleFunc("GET /import", s.handleImportForm)
 	mux.HandleFunc("POST /import", s.handleImport)
 	mux.HandleFunc("POST /settings/delete-all", s.handleDeleteAll)
 
-	log.Printf("weight-tracker listening on %s (db: %s)", *addr, *dbPath)
+	journalMode, err := db.JournalMode(sqlDB)
+	if err != nil {
+		log.Fatalf("read journal mode: %v", err)
+	}
+	if journalMode != "wal" {
+		// Not fatal — the rollback journal is still correct — but worth
+		// saying out loud, since it usually means the database lives on a
+		// filesystem that cannot do WAL.
+		log.Printf("warning: journal mode is %q, not WAL", journalMode)
+	}
+
+	log.Printf("weight-tracker listening on %s (db: %s, journal: %s)", *addr, *dbPath, journalMode)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		log.Fatal(err)
 	}
