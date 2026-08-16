@@ -5,12 +5,16 @@ BIN_DIR  := bin
 PID_FILE := $(BIN_DIR)/$(BINARY).pid
 LOG_FILE := $(BIN_DIR)/$(BINARY).log
 
+# What 'make start' polls to decide the daemon is actually serving. Override
+# alongside ADDR if you bind to something localhost can't reach.
+HEALTH_URL ?= http://localhost$(ADDR)/
+
 PI_HOST ?= jcwpi
 PI_USER ?= jcw
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
 
-.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy deploy help
+.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy help
 
 help:
 	@echo "make run         - go run the app locally on $(ADDR), attached to this terminal"
@@ -23,6 +27,8 @@ help:
 	@echo "make build-pi    - cross-compile for Raspberry Pi (PI_ARCH=$(PI_ARCH))"
 	@echo "make deploy      - build-pi, then scp + restart the systemd service on PI_HOST=$(PI_HOST)"
 	@echo "make clean       - stop the daemon, then remove build output and the local dev database"
+	@echo "make test        - go test ./... with the race detector"
+	@echo "make check       - everything CI runs: gofmt check, vet, tests"
 	@echo "make fmt         - gofmt all source files"
 	@echo "make vet         - go vet ./..."
 	@echo "make tidy        - go mod tidy"
@@ -39,9 +45,22 @@ start: build
 		echo "already running (pid `cat $(PID_FILE)`)"; \
 	else \
 		nohup $(BIN_DIR)/$(BINARY) -addr $(ADDR) -db $(DB) > $(LOG_FILE) 2>&1 & \
-		echo $$! > $(PID_FILE); \
-		sleep 0.3; \
-		echo "started (pid `cat $(PID_FILE)`) on $(ADDR), logs at $(LOG_FILE)"; \
+		pid=$$!; \
+		echo $$pid > $(PID_FILE); \
+		i=0; \
+		while [ $$i -lt 100 ]; do \
+			if ! kill -0 $$pid 2>/dev/null; then \
+				echo "failed to start, see $(LOG_FILE):"; \
+				tail -n 20 $(LOG_FILE); \
+				rm -f $(PID_FILE); \
+				exit 1; \
+			fi; \
+			if ! command -v curl > /dev/null 2>&1; then sleep 1; break; fi; \
+			if curl -sf -o /dev/null $(HEALTH_URL) 2>/dev/null; then break; fi; \
+			i=`expr $$i + 1`; \
+			sleep 0.1; \
+		done; \
+		echo "started (pid $$pid) on $(ADDR), logs at $(LOG_FILE)"; \
 	fi
 
 stop:
@@ -85,6 +104,18 @@ deploy: build-pi
 clean: stop
 	rm -rf $(BIN_DIR)
 	rm -f $(DB) $(DB)-journal $(DB)-wal $(DB)-shm
+
+test:
+	go test -race -cover ./...
+
+# Mirrors the CI workflow, so a green 'make check' locally means a green CI.
+check:
+	@unformatted=`gofmt -l .`; \
+	if [ -n "$$unformatted" ]; then \
+		echo "these files need gofmt:"; echo "$$unformatted"; exit 1; \
+	fi
+	go vet ./...
+	go test -race -cover ./...
 
 fmt:
 	gofmt -l -w .

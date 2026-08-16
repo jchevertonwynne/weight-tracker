@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch cancels the first — no point finishing a
+# run for a commit that has already been superseded.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Track the toolchain the module already declares, so bumping Go
+          # is a one-line change in go.mod rather than two.
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go mod tidy is up to date
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod/go.sum are stale — run 'make tidy' and commit the result:"
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: Test
+        run: go test -race -cover ./...
+
+      # The app reads and writes local wall-clock times, and its
+      # morning/evening split hinges on a 4am boundary. The runner is UTC, so
+      # re-run the suite under offsets that would expose a timezone
+      # assumption — including a half-hour and a 45-minute offset.
+      - name: Test in other timezones
+        run: |
+          for tz in Europe/London America/New_York Australia/Sydney Asia/Kathmandu; do
+            echo "::group::TZ=$tz"
+            TZ=$tz go test ./... || exit 1
+            echo "::endgroup::"
+          done
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build for this host
+        run: go build ./...
+
+      # The whole point of the pure-Go SQLite driver is that the Raspberry Pi
+      # targets cross-compile without a toolchain — verify that stays true.
+      - name: Cross-compile for Raspberry Pi
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o /tmp/weight-tracker-arm64 .
+          GOOS=linux GOARCH=arm GOARM=6 go build -o /tmp/weight-tracker-armv6 .
