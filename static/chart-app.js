@@ -629,6 +629,33 @@
 		return !Number.isNaN(value) && value > 0 ? value : null;
 	}
 
+	// yAxisBounds pads the plotted range instead of letting Chart.js do what
+	// it does for bar charts and anchor the axis at zero. On the projected
+	// bedtime-weight scale that wasted the bottom 108kg of the panel on
+	// values that will never occur, squashing a ~1kg spread into a sliver.
+	//
+	// The whiskers are drawn by overnightBoxPlotPlugin straight onto the
+	// canvas, so Chart.js has no idea they exist and would happily clip
+	// them; every drawn value is folded in here rather than just the bar's
+	// own [low, high].
+	const axisPaddingKg = 1.5;
+	function yAxisBounds(points) {
+		let lo = Infinity;
+		let hi = -Infinity;
+		points.forEach((p) => {
+			[p.minKg, p.maxKg, p.lowKg, p.highKg, p.meanKg].forEach((value) => {
+				if (typeof value === 'number' && Number.isFinite(value)) {
+					lo = Math.min(lo, value);
+					hi = Math.max(hi, value);
+				}
+			});
+		});
+		// No finite values at all: leave the axis to Chart.js rather than
+		// handing it min: Infinity.
+		if (lo === Infinity) return {};
+		return { min: lo - axisPaddingKg, max: hi + axisPaddingKg };
+	}
+
 	function renderChart(data, checked) {
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
@@ -693,6 +720,7 @@
 							ticks: { color: cssVar('--on-surface-muted') },
 						},
 						y: {
+							...yAxisBounds(plotPoints),
 							title: {
 								display: true,
 								text: targetKg === null ? 'Overnight change (kg)' : 'Bedtime weight (kg)',

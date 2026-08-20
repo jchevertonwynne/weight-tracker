@@ -1,11 +1,45 @@
-document.querySelectorAll('.tab-btn').forEach((btn) => {
+// The active tab lives in the URL hash, so a reload keeps you where you
+// were instead of dropping you back on Log, and the back button steps
+// through the tabs you visited. A hash rather than a query parameter
+// because this is purely a client-side view choice — the server renders
+// every panel regardless, and nothing here needs a round-trip.
+//
+// This runs synchronously at the end of <body>, so the correct panel is
+// showing before the first paint; there's no flash of the Log tab.
+const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
+const tabNames = tabButtons.map((btn) => btn.dataset.tab);
+
+// An unknown or absent hash falls back to the first tab rather than
+// leaving every panel hidden — a hand-edited or stale link should still
+// land somewhere usable.
+function tabFromURL() {
+	const name = window.location.hash.replace(/^#/, '');
+	return tabNames.includes(name) ? name : tabNames[0];
+}
+
+function activateTab(name) {
+	tabButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === name));
+	document.querySelectorAll('.tab-panel').forEach((panel) => {
+		panel.hidden = panel.id !== 'tab-' + name;
+	});
+}
+
+tabButtons.forEach((btn) => {
 	btn.addEventListener('click', () => {
-		document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-		document.querySelectorAll('.tab-panel').forEach((p) => { p.hidden = true; });
-		btn.classList.add('active');
-		document.getElementById('tab-' + btn.dataset.tab).hidden = false;
+		const name = btn.dataset.tab;
+		// Re-tapping the current tab shouldn't stack up history entries that
+		// the back button then has to walk through one by one.
+		if (tabFromURL() !== name) {
+			history.pushState(null, '', '#' + name);
+		}
+		activateTab(name);
 	});
 });
+
+// pushState doesn't fire hashchange, so back/forward is handled here.
+window.addEventListener('popstate', () => activateTab(tabFromURL()));
+
+activateTab(tabFromURL());
 
 const logDialog = document.getElementById('log-dialog');
 const recordedAtDate = document.getElementById('recorded-at-date');
