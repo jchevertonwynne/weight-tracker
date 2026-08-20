@@ -240,6 +240,37 @@
 		return 2;
 	}
 
+// weeklyTicks replaces Chart.js's automatic x-axis ticks with ones spaced a
+// whole number of weeks apart, and always pins the first and last dates so
+// the axis states the range it actually covers.
+//
+// The step grows in whole weeks for longer ranges — a year at one tick per
+// week would be fifty-odd labels — so the spacing stays a meaningful "every
+// N weeks" rather than degrading to an arbitrary interval.
+const weekMs = 7 * 24 * 60 * 60 * 1000;
+// Fits a phone without the labels colliding; the pinned end can add one more.
+const maxWeeklyTicks = 5;
+function weeklyTicks(axis) {
+	const { min, max } = axis;
+	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
+
+	const stepWeeks = Math.max(1, Math.ceil(Math.ceil((max - min) / weekMs) / maxWeeklyTicks));
+	const step = stepWeeks * weekMs;
+
+	const values = [min];
+	for (let t = min + step; t < max; t += step) {
+		values.push(t);
+	}
+	// Drop a regular tick sitting almost on top of the end date, so the two
+	// labels don't overlap — the end is the one worth keeping.
+	if (values.length > 1 && max - values[values.length - 1] < step / 2) {
+		values.pop();
+	}
+	values.push(max);
+
+	axis.ticks = values.map((value) => ({ value }));
+}
+
 	function buildConfig(data) {
 		const hasSplitTrend = (data.trendMorning && data.trendMorning.length >= 2) || (data.trendEvening && data.trendEvening.length >= 2);
 		const trendAvailable = !data.isBar && ((data.trend && data.trend.length >= 2) || hasSplitTrend);
@@ -385,8 +416,20 @@
 						min: data.xMin,
 						max: data.xMax,
 						grid: { color: cssVar('--chart-grid') },
+						// Chart.js picks tick positions to land on round
+						// numbers, which on an axis of epoch milliseconds means
+						// nothing in particular: a 30-day view came out labelled
+						// 9, 6, 6 and 8 days apart. weeklyTicks places them on a
+						// whole number of weeks instead, so the spacing means
+						// something and reading "a week ago" off the axis is
+						// possible.
+						afterBuildTicks: weeklyTicks,
 						ticks: {
 							color: cssVar('--on-surface-muted'),
+							// The tick list is already the intended one; letting
+							// Chart.js thin it would drop the pinned end dates.
+							autoSkip: false,
+							maxRotation: 0,
 							callback: (value) => new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
 						},
 					},
