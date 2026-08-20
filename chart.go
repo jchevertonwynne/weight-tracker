@@ -205,6 +205,10 @@ func emptyChartMessage(seriesParam string) string {
 		return "Not enough data yet — log at least two morning weigh-ins to see day-over-day deltas."
 	case "evening-delta":
 		return "Not enough data yet — log at least two evening weigh-ins to see day-over-day deltas."
+	case "overnight":
+		return "Not enough data yet — log an evening weigh-in followed by the next morning's to see overnight changes."
+	case "daily":
+		return "Not enough data yet — log a morning and evening weigh-in on the same day to see daily changes."
 	default:
 		return "No entries in this range yet."
 	}
@@ -276,9 +280,9 @@ func filterByWindow(pts []chartRawPoint, window rangeWindow) []chartRawPoint {
 }
 
 func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, today time.Time) ChartData {
-	chrono, _, _ := chronologicalWithDeltas(allEntries)
+	chrono, overnightByID, dailyByID := chronologicalWithDeltas(allEntries)
 	window := resolveRangeWindow(rangeParam, fromParam, untilParam, today)
-	isBar := seriesParam == "morning-delta" || seriesParam == "evening-delta"
+	isBar := seriesParam == "morning-delta" || seriesParam == "evening-delta" || seriesParam == "overnight" || seriesParam == "daily"
 
 	var morningDeltaByID, eveningDeltaByID map[int64]int64
 	switch seriesParam {
@@ -316,6 +320,24 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 				continue
 			}
 			delta, ok := eveningDeltaByID[e.ID]
+			if !ok {
+				continue
+			}
+			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(delta), class: deltaClass(delta)})
+		case "overnight":
+			if !visible {
+				continue
+			}
+			delta, ok := overnightByID[e.ID]
+			if !ok {
+				continue
+			}
+			pts = append(pts, chartRawPoint{x: dayNum(e.RecordedAt), t: e.RecordedAt, val: db.GramsToKg(delta), class: deltaClass(delta)})
+		case "daily":
+			if !visible {
+				continue
+			}
+			delta, ok := dailyByID[e.ID]
 			if !ok {
 				continue
 			}

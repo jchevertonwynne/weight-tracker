@@ -407,17 +407,49 @@
 			}
 		} else {
 			if (showRaw) {
-				datasets.push({
-					type: 'line',
-					label: 'Weight',
-					data: data.points,
-					borderColor: cssVar('--chart-line'),
-					borderWidth: lineWidthFor(data.points.length),
-					pointBackgroundColor: data.points.map((p) => colorFor(p.color)),
-					pointRadius: pointRadiusFor(data.points.length),
-					pointHoverRadius: 6,
-					tension: 0,
-				});
+				const morningPoints = data.points.filter((p) => p.color === 'morning');
+				const eveningPoints = data.points.filter((p) => p.color === 'evening');
+				if (morningPoints.length && eveningPoints.length) {
+					// Both periods are present (the "all" series) — one line
+					// per period, rather than a single line connecting
+					// alternating morning/evening readings directly to each
+					// other, which zig-zags between the two instead of
+					// showing either trend on its own.
+					datasets.push({
+						type: 'line',
+						label: 'Morning',
+						data: morningPoints,
+						borderColor: cssVar('--morning'),
+						borderWidth: lineWidthFor(morningPoints.length),
+						pointBackgroundColor: cssVar('--morning'),
+						pointRadius: pointRadiusFor(morningPoints.length),
+						pointHoverRadius: 6,
+						tension: 0,
+					});
+					datasets.push({
+						type: 'line',
+						label: 'Evening',
+						data: eveningPoints,
+						borderColor: cssVar('--evening'),
+						borderWidth: lineWidthFor(eveningPoints.length),
+						pointBackgroundColor: cssVar('--evening'),
+						pointRadius: pointRadiusFor(eveningPoints.length),
+						pointHoverRadius: 6,
+						tension: 0,
+					});
+				} else {
+					datasets.push({
+						type: 'line',
+						label: 'Weight',
+						data: data.points,
+						borderColor: cssVar('--chart-line'),
+						borderWidth: lineWidthFor(data.points.length),
+						pointBackgroundColor: data.points.map((p) => colorFor(p.color)),
+						pointRadius: pointRadiusFor(data.points.length),
+						pointHoverRadius: 6,
+						tension: 0,
+					});
+				}
 			}
 			if (showTrend) {
 				datasets.push({
