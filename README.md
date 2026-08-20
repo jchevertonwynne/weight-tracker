@@ -68,6 +68,39 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now weight-tracker
 ```
 
+## Continuous deployment
+
+Pushing to `main` deploys automatically, once this one-time setup is done:
+
+1. Generate a dedicated deploy-only SSH keypair (not your personal one) and
+   add its public half to `jcw`'s `authorized_keys` on the Pi, restricted via
+   a `command=` forced-command wrapper (`~/bin/wt-deploy-wrapper.sh`) to
+   *only* the two commands `make deploy` issues — an upload of the new
+   binary and the stop/replace/start sequence. This matters because `jcw`
+   already has passwordless sudo for everything, so a sudoers-only
+   restriction on this key would not actually restrict anything; the
+   forced-command wrapper is what caps a leaked key's blast radius at
+   "restart this one service."
+2. In the Tailscale admin console, add a `tag:ci` entry to `tagOwners` in
+   Policy file management, plus an ACL rule restricting `tag:ci` to the
+   Pi's `:22` (SSH) only — nothing else on the tailnet. Then generate a
+   reusable, ephemeral auth key tagged `tag:ci` (Settings → Keys → Generate
+   auth key) — this account doesn't expose OAuth clients, just classic auth
+   keys, so unlike an OAuth client's auto-minted short-lived keys, this one
+   has a fixed expiration and needs manual rotation before then.
+3. Add `TAILSCALE_AUTHKEY` and `PI_DEPLOY_SSH_KEY` (the deploy key's private
+   half) as repository secrets (Settings → Secrets and variables → Actions).
+
+From then on, every push to `main` that passes the `test`/`build` jobs joins
+the tailnet, runs `make build-pi` and `make deploy` exactly as a human would
+locally, then health-checks the Pi and fails loudly if it doesn't come back
+up — see the `deploy` job in `.github/workflows/ci.yml`. There's no
+auto-rollback: a failed health check just fails the CI run for a human to
+investigate, the same as any bad deploy today.
+
+`make deploy` still works locally too — for a one-off deploy from a branch
+that hasn't been merged, or if CI/Tailscale/GitHub is unavailable.
+
 ## Backups
 
 Settings → **Download backup** (or `GET /backup.db`) returns a consistent

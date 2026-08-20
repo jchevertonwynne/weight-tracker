@@ -86,3 +86,53 @@ jobs:
         run: |
           GOOS=linux GOARCH=arm64 go build -o /tmp/weight-tracker-arm64 .
           GOOS=linux GOARCH=arm GOARM=6 go build -o /tmp/weight-tracker-armv6 .
+
+  deploy:
+    name: Deploy to the Pi
+    needs: [test, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Reuses the same Makefile target a human runs locally, so there is
+      # only one deploy implementation to keep correct, not two that can
+      # drift apart.
+      - name: Build for the Pi
+        run: make build-pi
+
+      # Uses a pre-tagged reusable ephemeral auth key rather than an OAuth
+      # client — this Tailscale account's admin console doesn't expose OAuth
+      # clients, just classic auth keys. The tradeoff: this key has a fixed
+      # expiration (set when generating it) and needs manual rotation before
+      # then, unlike an OAuth client's auto-minted short-lived keys.
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          version: latest
+
+      - name: Install deploy key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PI_DEPLOY_SSH_KEY }}
+
+      - name: Trust the Pi's host key
+        run: ssh-keyscan -H jcwpi >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: make deploy PI_HOST=jcwpi PI_USER=jcw
+
+      - name: Health check
+        run: |
+          for _ in $(seq 1 10); do
+            curl -sf http://jcwpi:8090/ && exit 0
+            sleep 2
+          done
+          echo "::error::Pi did not come back healthy after deploy"
+          exit 1

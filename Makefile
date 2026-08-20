@@ -93,8 +93,16 @@ else
 	GOOS=linux GOARCH=arm GOARM=6 go build -o $(BIN_DIR)/$(BINARY)-armv6 .
 endif
 
+# The transfer goes over a plain `ssh ... 'cat > ...'` rather than scp:
+# modern scp defaults to the SFTP subsystem, which a restricted deploy key's
+# authorized_keys forced-command can't cleanly allowlist (unlike a plain
+# exec command, which SSH_ORIGINAL_COMMAND captures verbatim). This changes
+# nothing for a human's own unrestricted key — it's just a different way to
+# move the same bytes — but it's what lets the CI-only deploy key in the
+# README's "Continuous deployment" section be restricted to exactly this
+# command and the one below, rather than needing full shell access.
 deploy: build-pi
-	scp $(BIN_DIR)/$(BINARY)-$(PI_ARCH) $(PI_USER)@$(PI_HOST):~/$(BINARY)-new
+	ssh $(PI_USER)@$(PI_HOST) 'cat > ~/$(BINARY)-new' < $(BIN_DIR)/$(BINARY)-$(PI_ARCH)
 	ssh $(PI_USER)@$(PI_HOST) '\
 		sudo systemctl stop $(BINARY) 2>/dev/null; \
 		mv ~/$(BINARY)-new ~/$(BINARY)-$(PI_ARCH); \
