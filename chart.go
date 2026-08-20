@@ -70,6 +70,16 @@ func dayNum(t time.Time) float64 {
 	return float64(t.Unix()) / 86400.0
 }
 
+// TimeRangePickerConfig configures one instance of the shared
+// "time-range-picker" template partial (see templates/time_range_picker.html)
+// — the chart and the history filter each embed their own, with different
+// defaults, since a chart benefits from a bounded default view but a list
+// is more useful starting unfiltered.
+type TimeRangePickerConfig struct {
+	DefaultRange string // preset value ("30", "all", ...) selected by default
+	DefaultLabel string // the button's initial text, matching DefaultRange
+}
+
 // rangeWindow is a resolved visible-range bound. Either side may be
 // unbounded (hasFrom/hasUntil false) — both are for the "all time" preset,
 // and either independently for a custom range where the user left that
@@ -118,15 +128,42 @@ func resolveRangeWindow(rangeParam, fromParam, untilParam string, today time.Tim
 // worth supporting here: "now", or "now-" a count and a unit. The units are
 // Grafana's own and are case-sensitive in the same way — "m" is minutes and
 // "M" is months, which is worth knowing before typing "now-6m" and getting
-// six minutes of chart.
+// six minutes of chart. Only "-" is accepted: "now" only ever looks
+// backward, unlike the cross-reference expressions below where either
+// direction is meaningful.
 var relativeTimePattern = regexp.MustCompile(`^now(?:-(\d+)([smhdwMy]))?$`)
 
+// applyOffset shifts t by count units of unit, in the direction sign ("+"
+// or "-"). Days and larger use AddDate rather than a fixed multiple of
+// 24h, so the arithmetic is calendar-correct: an offset of one month lands
+// on the same day of the target month whatever its length, and a day step
+// across a DST boundary stays at the same wall-clock time. Reports ok=false
+// for an unrecognized unit.
+func applyOffset(t time.Time, sign string, count int, unit string) (time.Time, bool) {
+	n := count
+	if sign == "-" {
+		n = -n
+	}
+	switch unit {
+	case "s":
+		return t.Add(time.Duration(n) * time.Second), true
+	case "m":
+		return t.Add(time.Duration(n) * time.Minute), true
+	case "h":
+		return t.Add(time.Duration(n) * time.Hour), true
+	case "d":
+		return t.AddDate(0, 0, n), true
+	case "w":
+		return t.AddDate(0, 0, 7*n), true
+	case "M":
+		return t.AddDate(0, n, 0), true
+	case "y":
+		return t.AddDate(n, 0, 0), true
+	}
+	return t, false
+}
+
 // parseRelativeTime resolves an expression like "now-5d" against now.
-//
-// Days and larger use AddDate rather than a fixed multiple of 24h, so the
-// arithmetic is calendar-correct: "now-1M" lands on the same day of the
-// previous month whatever its length, and a day step across a DST boundary
-// stays at the same wall-clock time.
 func parseRelativeTime(value string, now time.Time) (time.Time, bool) {
 	m := relativeTimePattern.FindStringSubmatch(value)
 	if m == nil {
@@ -139,27 +176,38 @@ func parseRelativeTime(value string, now time.Time) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	switch m[2] {
-	case "s":
-		return now.Add(-time.Duration(n) * time.Second), true
-	case "m":
-		return now.Add(-time.Duration(n) * time.Minute), true
-	case "h":
-		return now.Add(-time.Duration(n) * time.Hour), true
-	case "d":
-		return now.AddDate(0, 0, -n), true
-	case "w":
-		return now.AddDate(0, 0, -7*n), true
-	case "M":
-		return now.AddDate(0, -n, 0), true
-	case "y":
-		return now.AddDate(-n, 0, 0), true
+	return applyOffset(now, "-", n, m[2])
+}
+
+// crossRefPattern matches a bound expressed relative to the OTHER bound:
+// "to" or "from" (naming the other query param), a sign, a count, and a
+// unit — e.g. "to-5d" in the from field ("5 days before whatever the until
+// field resolves to"), or "from+5d" in the until field ("5 days after
+// whatever the from field resolves to"). Unlike "now", both signs are
+// useful here since either field can reasonably sit before or after the
+// other.
+var crossRefPattern = regexp.MustCompile(`^(to|from)([+-])(\d+)([smhdwMy])$`)
+
+// parseCrossRef resolves value as a reference to keyword ("to" or "from"),
+// offset from anchor — the OTHER field's own already-resolved value. ok is
+// false if value doesn't reference keyword, or if anchor never resolved
+// (hasAnchor false): there's nothing to offset from in that case.
+func parseCrossRef(value, keyword string, anchor time.Time, hasAnchor bool) (time.Time, bool) {
+	m := crossRefPattern.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil || m[1] != keyword || !hasAnchor {
+		return time.Time{}, false
 	}
-	return time.Time{}, false
+	n, err := strconv.Atoi(m[3])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return applyOffset(anchor, m[2], n, m[4])
 }
 
 // parseRangeBound reads one side of a custom range, which may be either a
-// calendar date ("2026-01-01") or a relative expression ("now-5d").
+// calendar date ("2026-01-01") or a relative expression ("now-5d"). It
+// does not resolve cross-references ("to-5d", "from+5d") — those need the
+// other side's value too, so customRangeWindow handles them separately.
 func parseRangeBound(value string, now time.Time) (time.Time, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -187,8 +235,13 @@ func endOfDay(t time.Time) time.Time {
 
 // customRangeWindow parses the "from"/"until" query params for a custom
 // range. Each side is independently optional — blank or unparseable just
-// leaves that end unbounded — and each accepts a date or a relative
-// expression, so "now-5d" to "now" works the way it does in Grafana.
+// leaves that end unbounded — and each accepts a date, a relative
+// expression ("now-5d"), or a reference to the OTHER side ("to-5d" in
+// from, "from+5d" in until), resolved once that other side's own value is
+// known. So from=now-30d / until=from+5d and from=to-5d / until=now both
+// work, but a side that only makes sense via the other — blank, itself a
+// cross-reference, or otherwise unparseable — leaves that side unbounded:
+// there is nothing to anchor a cross-reference to.
 //
 // Both ends are snapped to whole days: the start to 00:00 and the end to
 // 23:59:59.999. A range is a span of dates here, not of instants, so every
@@ -197,12 +250,24 @@ func endOfDay(t time.Time) time.Time {
 // would drop this evening's. It does mean the sub-day units (s, m, h) round
 // to the same day boundaries as everything else.
 func customRangeWindow(fromParam, untilParam string, now time.Time) rangeWindow {
-	var w rangeWindow
-	if t, ok := parseRangeBound(fromParam, now); ok {
-		w.from, w.hasFrom = startOfDay(t), true
+	fromT, fromOK := parseRangeBound(fromParam, now)
+	untilT, untilOK := parseRangeBound(untilParam, now)
+
+	// Second pass: whichever side didn't resolve on its own gets a chance
+	// to resolve against the side that did (or that just did, above).
+	if !fromOK {
+		fromT, fromOK = parseCrossRef(fromParam, "to", untilT, untilOK)
 	}
-	if t, ok := parseRangeBound(untilParam, now); ok {
-		w.until, w.hasUntil = endOfDay(t), true
+	if !untilOK {
+		untilT, untilOK = parseCrossRef(untilParam, "from", fromT, fromOK)
+	}
+
+	var w rangeWindow
+	if fromOK {
+		w.from, w.hasFrom = startOfDay(fromT), true
+	}
+	if untilOK {
+		w.until, w.hasUntil = endOfDay(untilT), true
 	}
 	return w
 }

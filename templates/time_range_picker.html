@@ -1,0 +1,52 @@
+{{/* time-range-picker is the Grafana-style range control shared by the
+     Trend chart and the History filter: a button showing the active range,
+     opening a popover of quick presets plus a custom from/until section.
+     Both instances share the exact same markup/behavior (per data-role,
+     scoped by static/app.js) so there's no divergence between them —
+     configure defaults via a TimeRangePickerConfig, everything else is
+     identical. */}}
+{{define "time-range-picker"}}
+<div class="field time-range-picker" data-time-range-picker>
+	<span>Range</span>
+	<button type="button" class="time-range-btn" data-role="btn" aria-haspopup="true" aria-expanded="false">
+		<span data-role="label">{{.DefaultLabel}}</span>
+		<span class="time-range-caret" aria-hidden="true">&#9662;</span>
+	</button>
+	<input type="hidden" name="range" data-role="range-input" value="{{.DefaultRange}}" autocomplete="off">
+	<input type="hidden" name="from" data-role="from-input" autocomplete="off">
+	<input type="hidden" name="until" data-role="until-input" autocomplete="off">
+	<div class="time-range-popover" data-role="popover" hidden>
+		<ul class="time-range-presets">
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "7"}} active{{end}}" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "30"}} active{{end}}" data-range="30" data-label="Last 30 days">Last 30 days</button></li>
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "90"}} active{{end}}" data-range="90" data-label="Last 90 days">Last 90 days</button></li>
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "365"}} active{{end}}" data-range="365" data-label="Last year">Last year</button></li>
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "this-year"}} active{{end}}" data-range="this-year" data-label="This year">This year</button></li>
+			<li><button type="button" class="time-range-preset{{if eq .DefaultRange "all"}} active{{end}}" data-range="all" data-label="All time">All time</button></li>
+		</ul>
+		<div class="time-range-custom">
+			<h3>Custom range</h3>
+			<label class="field">
+				<span>From</span>
+				<input type="text" data-role="custom-from" autocomplete="off"
+					inputmode="text" spellcheck="false"
+					placeholder="2026-01-01 or now-5d">
+			</label>
+			<label class="field">
+				<span>Until</span>
+				<input type="text" data-role="custom-until" autocomplete="off"
+					inputmode="text" spellcheck="false"
+					placeholder="2026-08-16 or now">
+			</label>
+			<p class="empty time-range-hint">
+				A date, or a relative time like <code>now</code>,
+				<code>now-5d</code>, <code>now-6M</code>. Units:
+				s, m (minutes), h, d, w, M (months), y. Either side can
+				also reference the other: <code>to-5d</code> in From,
+				<code>from+5d</code> in Until.
+			</p>
+			<button type="button" class="btn btn-primary btn-small" data-role="custom-apply">Apply time range</button>
+		</div>
+	</div>
+</div>
+{{end}}

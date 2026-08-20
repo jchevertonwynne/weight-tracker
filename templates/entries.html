@@ -15,14 +15,7 @@
 					<option value="evening">Evening</option>
 				</select>
 			</label>
-			<label class="field">
-				<span>From</span>
-				<input type="date" name="from" autocomplete="off">
-			</label>
-			<label class="field">
-				<span>Until</span>
-				<input type="date" name="until" autocomplete="off">
-			</label>
+			{{template "time-range-picker" .HistoryRange}}
 		</div>
 	</form>
 </section>

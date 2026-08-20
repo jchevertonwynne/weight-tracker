@@ -3,47 +3,7 @@
 	<h2>Trend</h2>
 	<form id="chart-controls" class="chart-controls">
 		<div class="chart-controls-row">
-			<div class="field time-range-picker">
-				<span>Range</span>
-				<button type="button" class="time-range-btn" id="time-range-btn" aria-haspopup="true" aria-expanded="false">
-					<span id="time-range-label">Last 30 days</span>
-					<span class="time-range-caret" aria-hidden="true">&#9662;</span>
-				</button>
-				<input type="hidden" name="range" id="range-input" value="30" autocomplete="off">
-				<input type="hidden" name="from" id="from-input" autocomplete="off">
-				<input type="hidden" name="until" id="until-input" autocomplete="off">
-				<div class="time-range-popover" id="time-range-popover" hidden>
-					<ul class="time-range-presets">
-						<li><button type="button" class="time-range-preset" data-range="7" data-label="Last 7 days">Last 7 days</button></li>
-						<li><button type="button" class="time-range-preset active" data-range="30" data-label="Last 30 days">Last 30 days</button></li>
-						<li><button type="button" class="time-range-preset" data-range="90" data-label="Last 90 days">Last 90 days</button></li>
-						<li><button type="button" class="time-range-preset" data-range="365" data-label="Last year">Last year</button></li>
-						<li><button type="button" class="time-range-preset" data-range="this-year" data-label="This year">This year</button></li>
-						<li><button type="button" class="time-range-preset" data-range="all" data-label="All time">All time</button></li>
-					</ul>
-					<div class="time-range-custom">
-						<h3>Custom range</h3>
-						<label class="field">
-							<span>From</span>
-							<input type="text" id="custom-range-from" autocomplete="off"
-								inputmode="text" spellcheck="false"
-								placeholder="2026-01-01 or now-5d">
-						</label>
-						<label class="field">
-							<span>Until</span>
-							<input type="text" id="custom-range-until" autocomplete="off"
-								inputmode="text" spellcheck="false"
-								placeholder="2026-08-16 or now">
-						</label>
-						<p class="empty time-range-hint">
-							A date, or a relative time like <code>now</code>,
-							<code>now-5d</code>, <code>now-6M</code>. Units:
-							s, m (minutes), h, d, w, M (months), y.
-						</p>
-						<button type="button" class="btn btn-primary btn-small" id="custom-range-apply">Apply time range</button>
-					</div>
-				</div>
-			</div>
+			{{template "time-range-picker" .ChartRange}}
 			<label class="field">
 				<span>Series</span>
 				<select name="series" autocomplete="off">

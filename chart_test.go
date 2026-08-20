@@ -582,3 +582,76 @@ func TestCustomRangeAcceptsRelativeExpressions(t *testing.T) {
 		}
 	})
 }
+
+func TestCustomRangeCrossReferences(t *testing.T) {
+	now := at(t, "2026-08-16 14:30")
+
+	t.Run("from can reference to", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "to-5d", "now", now)
+		if !w.hasFrom || !w.hasUntil {
+			t.Fatalf("window = %+v, want both bounds", w)
+		}
+		// "to" resolves to today (now), so "to-5d" is 5 days before that.
+		if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-08-11 00:00:00" {
+			t.Errorf("from = %s, want 5 days before until", got)
+		}
+		if got := w.until.Format("2006-01-02 15:04:05.000"); got != "2026-08-16 23:59:59.999" {
+			t.Errorf("until = %s, want the end of today", got)
+		}
+	})
+
+	t.Run("until can reference from — the inverse of to-5d", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "now-30d", "from+5d", now)
+		if !w.hasFrom || !w.hasUntil {
+			t.Fatalf("window = %+v, want both bounds", w)
+		}
+		if got := w.from.Format("2006-01-02 15:04:05"); got != "2026-07-17 00:00:00" {
+			t.Errorf("from = %s, want 30 days before now", got)
+		}
+		// from+5d: 5 days after the 17th is the 22nd.
+		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-07-22 23:59:59" {
+			t.Errorf("until = %s, want 5 days after from", got)
+		}
+	})
+
+	t.Run("a cross-reference can anchor on a literal date", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "2026-08-01", "from+10d", now)
+		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-08-11 23:59:59" {
+			t.Errorf("until = %s, want 10 days after the literal from date", got)
+		}
+	})
+
+	t.Run("to accepts + and from accepts -, not just the inverse pairing", func(t *testing.T) {
+		// These read a little unusual (from ends up after until), but the
+		// parser doesn't police that — an inverted window just contains
+		// nothing, same as any other empty range.
+		w := resolveRangeWindow("custom", "now", "from-5d", now)
+		if !w.hasFrom || !w.hasUntil {
+			t.Fatalf("window = %+v, want both bounds", w)
+		}
+		if got := w.until.Format("2006-01-02 15:04:05"); got != "2026-08-11 23:59:59" {
+			t.Errorf("until = %s, want 5 days before from", got)
+		}
+	})
+
+	t.Run("mutual cross-reference has no independent anchor, so both sides are unbounded", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "to-5d", "from+5d", now)
+		if w.hasFrom || w.hasUntil {
+			t.Errorf("window = %+v, want fully unbounded — neither side ever resolves", w)
+		}
+	})
+
+	t.Run("a self-reference doesn't match the other keyword, so it's ignored", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "from-5d", "to+5d", now)
+		if w.hasFrom || w.hasUntil {
+			t.Errorf("window = %+v, want fully unbounded — from doesn't mean anything referencing itself", w)
+		}
+	})
+
+	t.Run("a lone reference with no anchor stays unbounded on that side", func(t *testing.T) {
+		w := resolveRangeWindow("custom", "to-5d", "", now)
+		if w.hasFrom {
+			t.Error("from resolved with no until value to anchor to")
+		}
+	})
+}

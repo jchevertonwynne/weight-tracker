@@ -105,19 +105,23 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	data := struct {
-		NowDate string
-		NowTime string
-		Rows    []Row
-		Goals   []GoalRow
-		Markers []MarkerRow
-		Summary WeeklySummary
+		NowDate      string
+		NowTime      string
+		Rows         []Row
+		Goals        []GoalRow
+		Markers      []MarkerRow
+		Summary      WeeklySummary
+		ChartRange   TimeRangePickerConfig
+		HistoryRange TimeRangePickerConfig
 	}{
-		NowDate: now.Format("2006-01-02"),
-		NowTime: now.Format("15:04"),
-		Rows:    buildRows(entries),
-		Goals:   buildGoalRows(goals, now),
-		Markers: buildMarkerRows(markers),
-		Summary: buildWeeklySummary(entries, now),
+		NowDate:      now.Format("2006-01-02"),
+		NowTime:      now.Format("15:04"),
+		Rows:         buildRows(entries),
+		Goals:        buildGoalRows(goals, now),
+		Markers:      buildMarkerRows(markers),
+		Summary:      buildWeeklySummary(entries, now),
+		ChartRange:   TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		HistoryRange: TimeRangePickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
 	}
 	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

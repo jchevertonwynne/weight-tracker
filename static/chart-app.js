@@ -30,150 +30,12 @@
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
 
-	// parseDateInput reads a "2026-01-01" bound as a local date rather than
-	// UTC midnight — new Date('2026-01-01') parses as UTC, which can display
-	// as the previous day in negative UTC-offset zones.
-	function parseDateInput(value) {
-		const [y, m, d] = value.split('-').map(Number);
-		return new Date(y, m - 1, d);
-	}
-
-	function formatDateLabel(date) {
-		return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-	}
-
-	// Grafana-style time range picker: a single button showing the active
-	// range, opening a popover with quick presets alongside a custom
-	// from/until section — rather than a <select> plus a permanently-visible
-	// (or awkwardly toggled) pair of date fields.
-	const timeRangeBtn = document.getElementById('time-range-btn');
-	const timeRangeLabel = document.getElementById('time-range-label');
-	const timeRangePopover = document.getElementById('time-range-popover');
-	const rangeInput = document.getElementById('range-input');
-	const fromInput = document.getElementById('from-input');
-	const untilInput = document.getElementById('until-input');
-	const customFromInput = document.getElementById('custom-range-from');
-	const customUntilInput = document.getElementById('custom-range-until');
-	const customApplyBtn = document.getElementById('custom-range-apply');
-	const presetButtons = Array.from(document.querySelectorAll('.time-range-preset'));
-
-	// syncRangeLabel renders the button's label and the active preset from
-	// the values that are actually submitted, rather than trusting them to
-	// have been set together.
-	//
-	// The label is static text in the template but the range is a hidden
-	// input, and browsers restore form-control state across a reload while
-	// leaving the text alone. A restored "90" therefore left the button
-	// still reading "Last 30 days" while the chart drew ninety — the control
-	// lying about what it was showing. Deriving one from the other makes
-	// that impossible, and autocomplete="off" on the controls stops the
-	// restore happening in the first place.
-	// customValuesFor writes a preset out in the same syntax the custom boxes
-	// accept, so selecting one fills them in and tweaking an end becomes an
-	// edit rather than a retype. "now" is the default end for every range:
-	// it reads as the intent, and it keeps tracking rather than freezing on
-	// the date the box happened to be filled.
-	function customValuesFor(range) {
-		if (range === 'all') {
-			return { from: '', until: 'now' };
-		}
-		if (range === 'this-year') {
-			return { from: `${new Date().getFullYear()}-01-01`, until: 'now' };
-		}
-		return { from: `now-${range}d`, until: 'now' };
-	}
-
-	// syncCustomInputs mirrors the active range into the custom boxes. A
-	// custom range is left alone — the boxes are already the source of truth
-	// for it, and rewriting them would fight the user's own text.
-	function syncCustomInputs() {
-		if (rangeInput.value === 'custom') return;
-		const values = customValuesFor(rangeInput.value);
-		customFromInput.value = values.from;
-		customUntilInput.value = values.until;
-	}
-
-	// A custom bound is either a calendar date or a relative expression like
-	// "now-5d". Only the date form is worth prettifying — a relative
-	// expression already reads as what the user typed, and echoing it back
-	// verbatim is also how a typo becomes visible, since the server treats an
-	// unparseable bound as simply unbounded on that side.
-	const dateOnlyBound = /^\d{4}-\d{2}-\d{2}$/;
-	function formatBound(value) {
-		return dateOnlyBound.test(value) ? formatDateLabel(parseDateInput(value)) : value;
-	}
-
-	function syncRangeLabel() {
-		if (rangeInput.value === 'custom') {
-			presetButtons.forEach((b) => b.classList.remove('active'));
-			const from = fromInput.value;
-			const until = untilInput.value;
-			if (from && until) {
-				timeRangeLabel.textContent = `${formatBound(from)} – ${formatBound(until)}`;
-			} else if (from) {
-				timeRangeLabel.textContent = `Since ${formatBound(from)}`;
-			} else if (until) {
-				timeRangeLabel.textContent = `Until ${formatBound(until)}`;
-			}
-			return;
-		}
-		presetButtons.forEach((btn) => {
-			const match = btn.dataset.range === rangeInput.value;
-			btn.classList.toggle('active', match);
-			if (match) timeRangeLabel.textContent = btn.dataset.label;
-		});
-		syncCustomInputs();
-	}
-
-	function openTimeRangePopover() {
-		timeRangePopover.hidden = false;
-		timeRangeBtn.setAttribute('aria-expanded', 'true');
-	}
-
-	function closeTimeRangePopover() {
-		timeRangePopover.hidden = true;
-		timeRangeBtn.setAttribute('aria-expanded', 'false');
-	}
-
-	timeRangeBtn.addEventListener('click', (event) => {
-		event.stopPropagation();
-		if (timeRangePopover.hidden) {
-			openTimeRangePopover();
-		} else {
-			closeTimeRangePopover();
-		}
-	});
-
-	document.addEventListener('click', (event) => {
-		if (!timeRangePopover.hidden && !event.composedPath().includes(timeRangePopover) && event.target !== timeRangeBtn) {
-			closeTimeRangePopover();
-		}
-	});
-
-	document.addEventListener('keydown', (event) => {
-		if (event.key === 'Escape' && !timeRangePopover.hidden) closeTimeRangePopover();
-	});
-
-	presetButtons.forEach((btn) => {
-		btn.addEventListener('click', () => {
-			rangeInput.value = btn.dataset.range;
-			fromInput.value = '';
-			untilInput.value = '';
-			syncRangeLabel();
-			closeTimeRangePopover();
-			refreshChart();
-		});
-	});
-
-	customApplyBtn.addEventListener('click', () => {
-		if (!customFromInput.value && !customUntilInput.value) return;
-		rangeInput.value = 'custom';
-		fromInput.value = customFromInput.value;
-		untilInput.value = customUntilInput.value;
-		syncRangeLabel();
-		closeTimeRangePopover();
-		refreshChart();
-	});
+	// The time-range-picker itself (button, popover, presets, custom
+	// from/until) is a shared component initialized once per instance by
+	// static/app.js — see initTimeRangePicker there. It fires a bubbling
+	// 'change' event on its hidden range input when applied, which the
+	// form.addEventListener('change', refreshChart) below picks up like any
+	// other control change; this file doesn't need to know it exists.
 
 	// markerLabelMaxWidth caps how wide a single marker's label is allowed to
 	// be before it gets truncated with an ellipsis — keeps a long note from
@@ -632,6 +494,5 @@
 	document.body.addEventListener('markers-changed', refreshChart);
 	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshChart);
 
-	syncRangeLabel();
 	refreshChart();
 })();

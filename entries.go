@@ -215,10 +215,12 @@ func (s *server) renderEntriesList(w http.ResponseWriter) {
 }
 
 // handleEntriesList renders the history list filtered by the entries-filter
-// form (period/from/until, same param names and window semantics as the
-// chart's own custom range). Registered separately from the CRUD handlers
-// above so a create/update/delete's own response can keep rendering the
-// unfiltered list — the filter form re-applies itself afterward via
+// form — period, plus the exact same range/from/until triple the chart's
+// own time-range-picker submits (it's the same shared component), so a
+// preset like range=30 is resolved by resolveRangeWindow the same way for
+// both. Registered separately from the CRUD handlers above so a
+// create/update/delete's own response can keep rendering the unfiltered
+// list — the filter form re-applies itself afterward via
 // hx-trigger="... entries-changed from:body", so the visible list ends up
 // filtered either way, just via one extra round-trip.
 func (s *server) handleEntriesList(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +230,11 @@ func (s *server) handleEntriesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	periodParam := r.URL.Query().Get("period")
-	window := customRangeWindow(r.URL.Query().Get("from"), r.URL.Query().Get("until"), time.Now())
+	rangeParam := r.URL.Query().Get("range")
+	if rangeParam == "" {
+		rangeParam = "all"
+	}
+	window := resolveRangeWindow(rangeParam, r.URL.Query().Get("from"), r.URL.Query().Get("until"), time.Now())
 	data := struct{ Rows []Row }{Rows: filterRows(buildRows(entries), periodParam, window)}
 	if err := tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
