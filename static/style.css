@@ -615,3 +615,19 @@ select:focus {
 	align-items: flex-start;
 	gap: 0.75rem;
 }
+
+/* A chart that keeps its height no matter what. Chart.js derives height
+   from the measured width when maintainAspectRatio is on, so re-rendering
+   into a freshly htmx-swapped fragment could measure mid-layout and come
+   back a fraction of the intended size. The box fixes the height, the
+   canvas fills it absolutely, and the chart is told not to manage its own
+   aspect ratio. */
+.chart-box {
+	position: relative;
+	height: 320px;
+}
+
+.chart-box canvas {
+	position: absolute;
+	inset: 0;
+}

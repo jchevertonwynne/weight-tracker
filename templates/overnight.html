@@ -84,7 +84,13 @@
 			</label>
 		</div>
 		<p class="empty" id="overnight-window-empty" hidden></p>
-		<canvas id="overnight-window-chart" height="220"></canvas>
+		{{/* Fixed-height box rather than letting the canvas size itself: with
+		     maintainAspectRatio the height is derived from the measured width,
+		     so an htmx swap of this fragment re-measured mid-layout and the
+		     chart came back squashed. */}}
+		<div class="chart-box" id="overnight-window-box">
+			<canvas id="overnight-window-chart"></canvas>
+		</div>
 	</section>
 
 	<section class="card">

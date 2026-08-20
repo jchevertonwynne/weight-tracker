@@ -706,13 +706,16 @@
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
 		const emptyEl = document.getElementById('overnight-window-empty');
+		// The fixed-height box, not the canvas, is what gets hidden — hiding
+		// the canvas alone would leave its 320px box as a gap.
+		const box = canvas.closest('.chart-box') || canvas;
 
 		if (chart) {
 			chart.destroy();
 			chart = null;
 		}
 		if (!data.hasData) {
-			canvas.hidden = true;
+			box.hidden = true;
 			if (emptyEl) {
 				emptyEl.hidden = false;
 				emptyEl.textContent = data.empty;
@@ -722,14 +725,14 @@
 
 		const points = visiblePoints(data, checked);
 		if (!points.length) {
-			canvas.hidden = true;
+			box.hidden = true;
 			if (emptyEl) {
 				emptyEl.hidden = false;
 				emptyEl.textContent = 'No windows selected — check at least one of 7/30/90 days above.';
 			}
 			return;
 		}
-		canvas.hidden = false;
+		box.hidden = false;
 		if (emptyEl) emptyEl.hidden = true;
 
 		const targetKg = currentTargetKg();
@@ -760,6 +763,7 @@
 				},
 				options: {
 					responsive: true,
+					maintainAspectRatio: false,
 					scales: {
 						x: {
 							grid: { color: cssVar('--chart-grid') },
