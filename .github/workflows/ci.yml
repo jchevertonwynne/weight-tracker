@@ -121,16 +121,22 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.PI_DEPLOY_SSH_KEY }}
 
+      # jcwpi's MagicDNS name doesn't resolve from this ephemeral runner
+      # (name resolution failure even though the tailnet connection itself
+      # is up), so the deploy steps use the Pi's Tailscale IP directly —
+      # stable as long as the device stays joined to the tailnet. A human
+      # running `make deploy` locally is unaffected; that still defaults to
+      # the friendly hostname.
       - name: Trust the Pi's host key
-        run: ssh-keyscan -H jcwpi >> ~/.ssh/known_hosts
+        run: ssh-keyscan -H 100.70.4.105 >> ~/.ssh/known_hosts
 
       - name: Deploy
-        run: make deploy PI_HOST=jcwpi PI_USER=jcw
+        run: make deploy PI_HOST=100.70.4.105 PI_USER=jcw
 
       - name: Health check
         run: |
           for _ in $(seq 1 10); do
-            curl -sf http://jcwpi:8090/ && exit 0
+            curl -sf http://100.70.4.105:8090/ && exit 0
             sleep 2
           done
           echo "::error::Pi did not come back healthy after deploy"
