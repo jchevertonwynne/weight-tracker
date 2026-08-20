@@ -18,25 +18,31 @@ type GoalRow struct {
 	Current            bool
 }
 
+// currentGoal returns the goal in effect at now. goals is newest-first (as
+// db.ListGoals returns it), so the first entry whose EffectiveFrom is at or
+// before now is the current one — anything later hasn't taken effect yet.
+func currentGoal(goals []db.Goal, now time.Time) (db.Goal, bool) {
+	for _, g := range goals {
+		if !g.EffectiveFrom.After(now) {
+			return g, true
+		}
+	}
+	return db.Goal{}, false
+}
+
 // buildGoalRows assumes goals is newest-first (as returned by db.ListGoals).
-// Current is set on the first goal (scanning newest-first) whose
-// EffectiveFrom is at or before now.
 func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
+	current, hasCurrent := currentGoal(goals, now)
 	rows := make([]GoalRow, len(goals))
-	foundCurrent := false
 	for i, g := range goals {
-		row := GoalRow{
+		rows[i] = GoalRow{
 			ID:                 g.ID,
 			WeightKgRaw:        formatKgInput(g.WeightG),
 			WeightKgStr:        formatKg(g.WeightG),
 			EffectiveFromLabel: g.EffectiveFrom.Format("Jan 2, 2006"),
 			EffectiveFromDate:  g.EffectiveFrom.Format("2006-01-02"),
+			Current:            hasCurrent && g.ID == current.ID,
 		}
-		if !foundCurrent && !g.EffectiveFrom.After(now) {
-			row.Current = true
-			foundCurrent = true
-		}
-		rows[i] = row
 	}
 	return rows
 }

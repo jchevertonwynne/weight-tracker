@@ -497,14 +497,26 @@
 	refreshChart();
 })();
 
-// Overnight tab's "Range by timescale" chart: one floating bar per fixed
-// window (7d/30d/90d) spanning mean ± 1 sample standard deviation, with the
-// mean itself marked as a point. Unlike the main chart above, this canvas
-// lives inside the htmx-swappable #overnight-content fragment — the filter
-// form and entries-changed both replace it wholesale — so the canvas is
-// looked up fresh on every refresh rather than captured once at load, and
-// any previous Chart instance (bound to whatever canvas element used to be
-// there) is torn down first.
+// Overnight tab's "Range by timescale" chart: one box-plot-style entry per
+// fixed window (7d/30d/90d) the user has ticked on, showing mean overnight
+// change ± 1 sample standard deviation as the box, whiskers stretching to
+// the actual smallest/largest change seen in that window, and a bold tick
+// at the mean. It's a hybrid of a real box plot's shape with this app's
+// mean/stddev statistical basis rather than true quartiles — worth knowing
+// before reading "min"/"max" as anything other than "most extreme night on
+// record in this window".
+//
+// Also drives the "Will I make it?" calculator below it: given tonight's
+// actual weight, project the plausible morning-weight range per checked
+// window and compare it against the currently active goal (if any) — both
+// pull from the same fetched data and the same checkbox state, so ticking a
+// window on or off updates the chart and the calculator together.
+//
+// Unlike the main chart above, this canvas lives inside the htmx-swappable
+// #overnight-content fragment — the filter form and entries-changed both
+// replace it wholesale — so elements are looked up fresh on every refresh
+// rather than captured once at load, and any previous Chart instance
+// (bound to whatever canvas element used to be there) is torn down first.
 (function () {
 	if (typeof Chart === 'undefined') return;
 
@@ -516,9 +528,69 @@
 		return meanKg < 0 ? cssVar('--loss') : cssVar('--gain');
 	}
 
-	let chart = null;
+	// overnightBoxPlotPlugin draws the whiskers (min/max, with end caps) and
+	// the mean tick that a plain floating-bar dataset can't express on its
+	// own — the bar dataset itself only draws the ±1 SD box. Registered
+	// once at load, same as yearBoundariesPlugin above; which points to
+	// draw is passed fresh through plugin options on every render, the same
+	// way markerLines below takes `markers` from `data.markers`.
+	const whiskerCapHalfWidth = 10;
+	const meanTickHalfWidth = 18;
+	const overnightBoxPlotPlugin = {
+		id: 'overnightBoxPlot',
+		afterDatasetsDraw(chartInstance, _args, opts) {
+			const points = opts.points;
+			if (!points || !points.length) return;
+			const { ctx, scales } = chartInstance;
+			ctx.save();
+			ctx.strokeStyle = cssVar('--on-surface-muted');
+			ctx.lineWidth = 1.5;
+			points.forEach((p, i) => {
+				const x = scales.x.getPixelForValue(i);
+				const yMin = scales.y.getPixelForValue(p.minKg);
+				const yMax = scales.y.getPixelForValue(p.maxKg);
+				ctx.beginPath();
+				ctx.moveTo(x, yMin);
+				ctx.lineTo(x, yMax);
+				ctx.moveTo(x - whiskerCapHalfWidth, yMin);
+				ctx.lineTo(x + whiskerCapHalfWidth, yMin);
+				ctx.moveTo(x - whiskerCapHalfWidth, yMax);
+				ctx.lineTo(x + whiskerCapHalfWidth, yMax);
+				ctx.stroke();
+			});
+			ctx.strokeStyle = cssVar('--on-surface');
+			ctx.lineWidth = 2.5;
+			points.forEach((p, i) => {
+				const x = scales.x.getPixelForValue(i);
+				const yMean = scales.y.getPixelForValue(p.meanKg);
+				ctx.beginPath();
+				ctx.moveTo(x - meanTickHalfWidth, yMean);
+				ctx.lineTo(x + meanTickHalfWidth, yMean);
+				ctx.stroke();
+			});
+			ctx.restore();
+		},
+	};
+	Chart.register(overnightBoxPlotPlugin);
 
-	function render(data) {
+	let chart = null;
+	let cachedData = null; // last successful /overnight/windows fetch
+
+	function checkedWindowLabels() {
+		return Array.from(document.querySelectorAll('#overnight-window-toggles input[data-window]'))
+			.filter((el) => el.checked)
+			.map((el) => el.dataset.window);
+	}
+
+	// visiblePoints keeps only checked windows that actually have at least
+	// one pair — a window with zero pairs has no meaningful mean/min/max to
+	// plot or project from, so it's dropped rather than drawn as a
+	// degenerate zero-height box at 0kg.
+	function visiblePoints(data, checked) {
+		return data.points.filter((p) => p.count > 0 && checked.includes(p.label));
+	}
+
+	function renderChart(data, checked) {
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
 		const emptyEl = document.getElementById('overnight-window-empty');
@@ -535,13 +607,22 @@
 			}
 			return;
 		}
+
+		const points = visiblePoints(data, checked);
+		if (!points.length) {
+			canvas.hidden = true;
+			if (emptyEl) {
+				emptyEl.hidden = false;
+				emptyEl.textContent = 'No windows selected — check at least one of 7/30/90 days above.';
+			}
+			return;
+		}
 		canvas.hidden = false;
 		if (emptyEl) emptyEl.hidden = true;
 
-		const labels = data.points.map((p) => p.label);
-		const ranges = data.points.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
-		const means = data.points.map((p) => p.meanKg);
-		const colors = data.points.map((p) => colorFor(p.meanKg));
+		const labels = points.map((p) => p.label);
+		const boxes = points.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
+		const colors = points.map((p) => colorFor(p.meanKg));
 
 		try {
 			chart = new Chart(canvas, {
@@ -550,20 +631,11 @@
 					datasets: [
 						{
 							type: 'bar',
-							label: 'Range (±1 SD)',
-							data: ranges,
+							label: 'Mean ± 1 SD',
+							data: boxes,
 							backgroundColor: colors,
 							borderRadius: 4,
 							barThickness: 40,
-						},
-						{
-							type: 'line',
-							label: 'Mean',
-							data: means,
-							showLine: false,
-							pointStyle: 'rectRot',
-							pointRadius: 7,
-							pointBackgroundColor: cssVar('--on-surface'),
 						},
 					],
 				},
@@ -586,22 +658,102 @@
 						legend: { display: false },
 						tooltip: {
 							callbacks: {
-								title: (items) => data.points[items[0].dataIndex].label,
+								title: (items) => points[items[0].dataIndex].label,
 								label: (item) => {
-									const p = data.points[item.dataIndex];
-									if (item.dataset.type === 'line') return 'Mean: ' + p.meanLabel;
-									return p.hasRange
-										? `Range: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg (${p.count} nights)`
-										: `Only ${p.count} night logged — not enough for a range yet`;
+									const p = points[item.dataIndex];
+									const lines = [`Mean: ${p.meanLabel}`];
+									lines.push(
+										p.hasRange
+											? `±1 SD box: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg`
+											: 'Not enough nights yet for a range',
+									);
+									lines.push(`Widest ever: ${p.minKg.toFixed(1)} to ${p.maxKg.toFixed(1)} kg`);
+									lines.push(`${p.count} night${p.count === 1 ? '' : 's'} logged`);
+									return lines;
 								},
 							},
 						},
+						overnightBoxPlot: { points },
 					},
 				},
 			});
 		} catch (err) {
 			console.error('overnight window chart build failed', err);
 		}
+	}
+
+	// recomputeTonightCalculator projects tonight's entered weight forward
+	// through each checked window's mean ± 1 SD to get a plausible morning
+	// range, then — if a goal is currently active — judges whether that
+	// range clears it: comfortably (the whole range is at/under goal), at
+	// risk (the whole range is over), or borderline (goal falls inside the
+	// range, so it could go either way).
+	function recomputeTonightCalculator(data, checked) {
+		const resultsEl = document.getElementById('overnight-tonight-results');
+		const emptyEl = document.getElementById('overnight-tonight-empty');
+		const input = document.getElementById('overnight-tonight-input');
+		if (!resultsEl || !emptyEl || !input) return;
+
+		resultsEl.innerHTML = '';
+		const tonightKg = parseFloat(input.value);
+		if (!data || !data.hasData) {
+			emptyEl.hidden = false;
+			emptyEl.textContent = 'Not enough data yet to project a morning range.';
+			return;
+		}
+		const points = visiblePoints(data, checked);
+		if (!points.length) {
+			emptyEl.hidden = false;
+			emptyEl.textContent = 'No windows selected — check at least one of 7/30/90 days above.';
+			return;
+		}
+		if (Number.isNaN(tonightKg) || tonightKg <= 0) {
+			emptyEl.hidden = false;
+			emptyEl.textContent = "Enter tonight's weight above to see a projected range.";
+			return;
+		}
+		emptyEl.hidden = true;
+
+		points.forEach((p) => {
+			const lowKg = tonightKg + p.lowKg;
+			const highKg = tonightKg + p.highKg;
+
+			const tile = document.createElement('div');
+			tile.className = 'stat-tile';
+
+			const label = document.createElement('span');
+			label.className = 'stat-label';
+			label.textContent = p.label;
+			tile.appendChild(label);
+
+			const chip = document.createElement('span');
+			chip.className = 'chip';
+			chip.textContent = p.hasRange
+				? `${lowKg.toFixed(1)} – ${highKg.toFixed(1)} kg`
+				: `~${lowKg.toFixed(1)} kg (not enough nights for a range)`;
+
+			if (data.hasGoal) {
+				if (highKg <= data.goalKg) {
+					chip.classList.add('chip-loss');
+					chip.textContent += ' — comfortably makes it';
+				} else if (lowKg > data.goalKg) {
+					chip.classList.add('chip-gain');
+					chip.textContent += ' — at risk of missing it';
+				} else {
+					chip.classList.add('chip-goal-current');
+					chip.textContent += ' — borderline, could go either way';
+				}
+			}
+			tile.appendChild(chip);
+			resultsEl.appendChild(tile);
+		});
+	}
+
+	function renderAll() {
+		if (!cachedData) return;
+		const checked = checkedWindowLabels();
+		renderChart(cachedData, checked);
+		recomputeTonightCalculator(cachedData, checked);
 	}
 
 	function refresh() {
@@ -611,12 +763,21 @@
 				if (!res.ok) throw new Error('server returned ' + res.status);
 				return res.json();
 			})
-			.then(render)
+			.then((data) => {
+				cachedData = data;
+				renderAll();
+			})
 			.catch((err) => console.error('overnight window chart refresh failed', err));
 	}
 
 	document.body.addEventListener('htmx:afterSwap', refresh);
 	document.body.addEventListener('entries-changed', refresh);
 	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
+	document.body.addEventListener('change', (event) => {
+		if (event.target.matches('#overnight-window-toggles input[data-window]')) renderAll();
+	});
+	document.body.addEventListener('input', (event) => {
+		if (event.target.id === 'overnight-tonight-input') recomputeTonightCalculator(cachedData, checkedWindowLabels());
+	});
 	refresh();
 })();

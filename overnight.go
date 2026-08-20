@@ -183,11 +183,15 @@ var overnightWindowSpans = []struct {
 	{"90d", 90},
 }
 
-// OvernightWindowPoint is one window's bar in the "Range by timescale"
-// chart: the mean overnight delta plus a ±1 sample-standard-deviation band
-// around it. HasRange is false below two pairs, since a standard deviation
-// needs at least two samples to mean anything — the bar then collapses to a
-// single point at the mean rather than showing a fabricated zero-width band.
+// OvernightWindowPoint is one window's box-plot-style entry in the "Range by
+// timescale" chart: the box is the mean overnight delta ± 1 sample-standard-
+// deviation, and the whiskers extend to the actual smallest/largest delta
+// seen in that window — a hybrid of a real box plot's shape with this app's
+// mean/stddev statistical basis rather than quartiles. HasRange is false
+// below two pairs, since a standard deviation needs at least two samples to
+// mean anything — the box then collapses to a single point at the mean
+// rather than showing a fabricated zero-width band (Min/Max still equal
+// Mean in that case, for the same reason).
 type OvernightWindowPoint struct {
 	Label     string  `json:"label"`
 	Count     int     `json:"count"`
@@ -196,12 +200,20 @@ type OvernightWindowPoint struct {
 	MeanLabel string  `json:"meanLabel"`
 	LowKg     float64 `json:"lowKg"`
 	HighKg    float64 `json:"highKg"`
+	MinKg     float64 `json:"minKg"`
+	MaxKg     float64 `json:"maxKg"`
 }
 
 type OvernightWindowChart struct {
 	HasData bool                   `json:"hasData"`
 	Empty   string                 `json:"empty,omitempty"`
 	Points  []OvernightWindowPoint `json:"points,omitempty"`
+	// HasGoal/GoalKg carry the currently-active goal weight (see
+	// currentGoal in goals.go) so the client-side "tonight's weight"
+	// calculator can judge whether a projected morning range clears it,
+	// without a second round trip.
+	HasGoal bool    `json:"hasGoal"`
+	GoalKg  float64 `json:"goalKg,omitempty"`
 }
 
 // sampleStdDevG computes the sample standard deviation (n-1 denominator, the
@@ -222,7 +234,7 @@ func sampleStdDevG(deltas []int64, meanG float64) (stddev float64, ok bool) {
 // buildOvernightWindowChart computes the fixed-window comparison over the
 // full entry set — windowedOvernightPairs already applies the same
 // full-set-then-filter rule this file's other functions depend on.
-func buildOvernightWindowChart(entries []db.Entry, now time.Time) OvernightWindowChart {
+func buildOvernightWindowChart(entries []db.Entry, goals []db.Goal, now time.Time) OvernightWindowChart {
 	var points []OvernightWindowPoint
 	anyData := false
 	for _, span := range overnightWindowSpans {
@@ -234,13 +246,18 @@ func buildOvernightWindowChart(entries []db.Entry, now time.Time) OvernightWindo
 			anyData = true
 			deltas := make([]int64, len(pairs))
 			var sum int64
+			minG, maxG := pairs[0].DeltaG, pairs[0].DeltaG
 			for i, p := range pairs {
 				deltas[i] = p.DeltaG
 				sum += p.DeltaG
+				minG = min(minG, p.DeltaG)
+				maxG = max(maxG, p.DeltaG)
 			}
 			meanG := sum / int64(len(pairs))
 			point.MeanKg = db.GramsToKg(meanG)
 			point.MeanLabel = formatKgDelta(meanG)
+			point.MinKg = db.GramsToKg(minG)
+			point.MaxKg = db.GramsToKg(maxG)
 			if stddev, ok := sampleStdDevG(deltas, float64(meanG)); ok {
 				point.HasRange = true
 				point.LowKg = db.GramsToKg(meanG - int64(math.Round(stddev)))
@@ -255,7 +272,13 @@ func buildOvernightWindowChart(entries []db.Entry, now time.Time) OvernightWindo
 	if !anyData {
 		return OvernightWindowChart{Empty: "Not enough data yet — log some overnight pairs to see how the range compares across timescales."}
 	}
-	return OvernightWindowChart{HasData: true, Points: points}
+
+	chartData := OvernightWindowChart{HasData: true, Points: points}
+	if goal, ok := currentGoal(goals, now); ok {
+		chartData.HasGoal = true
+		chartData.GoalKg = db.GramsToKg(goal.WeightG)
+	}
+	return chartData
 }
 
 // handleOvernightWindows returns the "Range by timescale" chart data as
@@ -267,8 +290,13 @@ func (s *server) handleOvernightWindows(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	goals, err := db.ListGoals(s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(buildOvernightWindowChart(entries, time.Now())); err != nil {
+	if err := json.NewEncoder(w).Encode(buildOvernightWindowChart(entries, goals, time.Now())); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

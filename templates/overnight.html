@@ -57,6 +57,25 @@
 
 	<section class="card">
 		<h2>Range by timescale</h2>
+		<p class="empty">
+			Each box spans the mean overnight change ± 1 standard deviation for
+			that window, with whiskers stretching out to the largest loss and
+			largest gain actually seen in it.
+		</p>
+		<div class="chart-controls-row" id="overnight-window-toggles">
+			<label class="field field-checkbox">
+				<input type="checkbox" id="overnight-window-toggle-7d" data-window="7d" checked hx-preserve="true" autocomplete="off">
+				<span>7 days</span>
+			</label>
+			<label class="field field-checkbox">
+				<input type="checkbox" id="overnight-window-toggle-30d" data-window="30d" checked hx-preserve="true" autocomplete="off">
+				<span>30 days</span>
+			</label>
+			<label class="field field-checkbox">
+				<input type="checkbox" id="overnight-window-toggle-90d" data-window="90d" checked hx-preserve="true" autocomplete="off">
+				<span>90 days</span>
+			</label>
+		</div>
 		<p class="empty" id="overnight-window-empty" hidden></p>
 		<canvas id="overnight-window-chart" height="220"></canvas>
 	</section>
@@ -86,6 +105,25 @@
 				<span class="stat-value" id="overnight-calc-safe">–</span>
 			</div>
 		</div>
+	</section>
+
+	<section class="card">
+		<h2>Will I make it?</h2>
+		<p class="empty">
+			Enter tonight's actual weight to see the plausible range for
+			tomorrow morning — using the mean ± 1 standard deviation from each
+			checked window above — and whether that range clears your current
+			goal weight.
+		</p>
+		<div class="entry-form">
+			<label class="field">
+				<span>Tonight's weight (kg)</span>
+				<input type="number" step="0.1" min="0" id="overnight-tonight-input"
+					hx-preserve="true" autocomplete="off" placeholder="e.g. 110">
+			</label>
+		</div>
+		<p class="empty" id="overnight-tonight-empty" hidden></p>
+		<div class="summary-stats" id="overnight-tonight-results"></div>
 	</section>
 
 	<section class="card">

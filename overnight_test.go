@@ -139,7 +139,7 @@ func TestSampleStdDevG(t *testing.T) {
 
 func TestBuildOvernightWindowChart(t *testing.T) {
 	t.Run("no entries at all yields the empty state", func(t *testing.T) {
-		got := buildOvernightWindowChart(nil, at(t, "2026-08-20 12:00"))
+		got := buildOvernightWindowChart(nil, nil, at(t, "2026-08-20 12:00"))
 		if got.HasData {
 			t.Error("HasData = true, want false with no entries")
 		}
@@ -148,12 +148,12 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 		}
 	})
 
-	t.Run("a single pair gives a mean but no range", func(t *testing.T) {
+	t.Run("a single pair gives a mean but no range, and min/max collapse to it", func(t *testing.T) {
 		entries := []db.Entry{
 			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
 		}
-		got := buildOvernightWindowChart(entries, at(t, "2026-08-20 12:00"))
+		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
 		if !got.HasData {
 			t.Fatal("HasData = false, want true")
 		}
@@ -166,6 +166,9 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 		}
 		if p.LowKg != p.MeanKg || p.HighKg != p.MeanKg {
 			t.Errorf("Low/High = %v/%v, want both equal to Mean %v", p.LowKg, p.HighKg, p.MeanKg)
+		}
+		if p.MinKg != p.MeanKg || p.MaxKg != p.MeanKg {
+			t.Errorf("Min/Max = %v/%v, want both equal to Mean %v", p.MinKg, p.MaxKg, p.MeanKg)
 		}
 	})
 
@@ -182,13 +185,60 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(6, at(t, "2026-06-02 07:00"), 81.0, ""),
 		}
 		now := at(t, "2026-08-20 12:00")
-		got := buildOvernightWindowChart(entries, now)
+		got := buildOvernightWindowChart(entries, nil, now)
 		counts := map[string]int{}
 		for _, p := range got.Points {
 			counts[p.Label] = p.Count
 		}
 		if counts["7d"] != 1 || counts["30d"] != 2 || counts["90d"] != 3 {
 			t.Errorf("counts = %+v, want 7d:1, 30d:2, 90d:3", counts)
+		}
+	})
+
+	t.Run("the 90d window's whiskers span its actual min/max delta", func(t *testing.T) {
+		entries := []db.Entry{
+			entry(1, at(t, "2026-08-18 20:00"), 84.0, ""), // -1.5kg
+			entry(2, at(t, "2026-08-19 07:00"), 82.5, ""),
+			entry(3, at(t, "2026-07-25 20:00"), 84.0, ""), // -3.0kg (largest loss)
+			entry(4, at(t, "2026-07-26 07:00"), 81.0, ""),
+			entry(5, at(t, "2026-06-01 20:00"), 84.0, ""), // +0.5kg (a gain)
+			entry(6, at(t, "2026-06-02 07:00"), 84.5, ""),
+		}
+		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
+		var ninety OvernightWindowPoint
+		for _, p := range got.Points {
+			if p.Label == "90d" {
+				ninety = p
+			}
+		}
+		if ninety.MinKg != -3.0 || ninety.MaxKg != 0.5 {
+			t.Errorf("90d Min/Max = %v/%v, want -3.0/0.5", ninety.MinKg, ninety.MaxKg)
+		}
+	})
+
+	t.Run("no goal set means HasGoal is false", func(t *testing.T) {
+		entries := []db.Entry{
+			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
+			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
+		}
+		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
+		if got.HasGoal {
+			t.Error("HasGoal = true, want false with no goals set")
+		}
+	})
+
+	t.Run("an active goal is surfaced alongside the window stats", func(t *testing.T) {
+		entries := []db.Entry{
+			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
+			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
+		}
+		goals := []db.Goal{goal(1, 80, "2026-01-01", t)}
+		got := buildOvernightWindowChart(entries, goals, at(t, "2026-08-20 12:00"))
+		if !got.HasGoal {
+			t.Fatal("HasGoal = false, want true with an active goal")
+		}
+		if got.GoalKg != 80 {
+			t.Errorf("GoalKg = %v, want 80", got.GoalKg)
 		}
 	})
 }
