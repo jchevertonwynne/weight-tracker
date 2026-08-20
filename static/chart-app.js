@@ -240,35 +240,93 @@
 		return 2;
 	}
 
-// weeklyTicks replaces Chart.js's automatic x-axis ticks with ones spaced a
-// whole number of weeks apart, and always pins the first and last dates so
-// the axis states the range it actually covers.
+// Time-axis ticks that land on calendar boundaries rather than on round
+// numbers of milliseconds, which is what Chart.js does by default and means
+// nothing to a reader — a 30-day view came out labelled 9, 6, 6 and 8 days
+// apart.
 //
-// The step grows in whole weeks for longer ranges — a year at one tick per
-// week would be fifty-odd labels — so the spacing stays a meaningful "every
-// N weeks" rather than degrading to an arbitrary interval.
-const weekMs = 7 * 24 * 60 * 60 * 1000;
-// Fits a phone without the labels colliding; the pinned end can add one more.
-const maxWeeklyTicks = 5;
-function weeklyTicks(axis) {
+// The unit is chosen to suit the span: a fortnight gets days, a couple of
+// months gets weeks, a year gets quarters. Ticks then sit on the first of
+// the month, or a Monday, so a label is a date someone can reason about
+// instead of an arbitrary offset from wherever the data happens to begin.
+//
+// Finest-first, so the axis carries as much detail as fits rather than
+// defaulting to the coarsest unit that technically works.
+const tickScales = [
+	{ unit: 'day', steps: [1, 2] },
+	{ unit: 'week', steps: [1, 2] },
+	{ unit: 'month', steps: [1, 2, 3, 6] },
+	{ unit: 'year', steps: [1, 2, 5] },
+];
+// What fits across a phone without the labels colliding, before the two
+// pinned end dates are added.
+const maxTimeTicks = 5;
+// A generated tick closer to a pinned end than this fraction of the span
+// is dropped, because the two labels would overlap. A fraction of the
+// span, not of the tick step: collision is about pixels, and a step-
+// relative rule throws away a perfectly well-spaced tick on long ranges
+// where one step is months wide. Roughly the width of a date label
+// against a phone-width axis.
+const tickEndExclusion = 0.12;
+
+function startOfUnit(ms, unit) {
+	const d = new Date(ms);
+	d.setHours(0, 0, 0, 0);
+	if (unit === 'week') {
+		// Weeks start Monday; getDay() is Sunday-based.
+		d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+	} else if (unit === 'month') {
+		d.setDate(1);
+	} else if (unit === 'year') {
+		d.setMonth(0, 1);
+	}
+	return d;
+}
+
+// Calendar arithmetic, not fixed millisecond offsets, so months of
+// different lengths and DST changes don't drift the ticks off their
+// boundaries.
+function advanceUnit(date, unit, step) {
+	const d = new Date(date);
+	if (unit === 'day') d.setDate(d.getDate() + step);
+	else if (unit === 'week') d.setDate(d.getDate() + 7 * step);
+	else if (unit === 'month') d.setMonth(d.getMonth() + step);
+	else d.setFullYear(d.getFullYear() + step);
+	return d;
+}
+
+function boundariesBetween(min, max, unit, step) {
+	const out = [];
+	let d = startOfUnit(min, unit);
+	if (d.getTime() < min) d = advanceUnit(d, unit, step);
+	// The cap is a guard against a pathological range spinning this loop,
+	// not a display choice — anything over the limit is rejected anyway.
+	while (d.getTime() <= max && out.length <= 64) {
+		out.push(d.getTime());
+		d = advanceUnit(d, unit, step);
+	}
+	return out;
+}
+
+function calendarTicks(axis) {
 	const { min, max } = axis;
 	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
 
-	const stepWeeks = Math.max(1, Math.ceil(Math.ceil((max - min) / weekMs) / maxWeeklyTicks));
-	const step = stepWeeks * weekMs;
-
-	const values = [min];
-	for (let t = min + step; t < max; t += step) {
-		values.push(t);
+	let chosen = [];
+	outer: for (const scale of tickScales) {
+		for (const step of scale.steps) {
+			const values = boundariesBetween(min, max, scale.unit, step);
+			if (values.length <= maxTimeTicks) {
+				chosen = values;
+				break outer;
+			}
+		}
 	}
-	// Drop a regular tick sitting almost on top of the end date, so the two
-	// labels don't overlap — the end is the one worth keeping.
-	if (values.length > 1 && max - values[values.length - 1] < step / 2) {
-		values.pop();
-	}
-	values.push(max);
 
-	axis.ticks = values.map((value) => ({ value }));
+	const exclusion = (max - min) * tickEndExclusion;
+	const values = chosen.filter((v) => v - min > exclusion && max - v > exclusion);
+	// The ends are always shown, so the axis states the range it covers.
+	axis.ticks = [min, ...values, max].map((value) => ({ value }));
 }
 
 	function buildConfig(data) {
@@ -416,14 +474,10 @@ function weeklyTicks(axis) {
 						min: data.xMin,
 						max: data.xMax,
 						grid: { color: cssVar('--chart-grid') },
-						// Chart.js picks tick positions to land on round
-						// numbers, which on an axis of epoch milliseconds means
-						// nothing in particular: a 30-day view came out labelled
-						// 9, 6, 6 and 8 days apart. weeklyTicks places them on a
-						// whole number of weeks instead, so the spacing means
-						// something and reading "a week ago" off the axis is
-						// possible.
-						afterBuildTicks: weeklyTicks,
+						// See calendarTicks: ticks land on calendar
+						// boundaries in a unit suited to the span, rather than
+						// on round numbers of milliseconds.
+						afterBuildTicks: calendarTicks,
 						ticks: {
 							color: cssVar('--on-surface-muted'),
 							// The tick list is already the intended one; letting
