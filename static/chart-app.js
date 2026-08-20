@@ -590,6 +590,45 @@
 		return data.points.filter((p) => p.count > 0 && checked.includes(p.label));
 	}
 
+	// projectOntoTarget shifts each point's overnight-change box/whiskers
+	// (in delta-kg, e.g. "-2.0 to -1.0") onto an absolute bedtime-weight
+	// scale anchored at targetKg (the desired morning weight): bedtime
+	// weight = target - delta, since a negative (loss) delta means you can
+	// weigh correspondingly more at bedtime. That subtraction flips which
+	// edge is "low" vs "high" — the smallest loss (highKg/maxKg, less
+	// negative) becomes the smallest bedtime allowance, and the largest
+	// loss (lowKg/minKg) becomes the largest — so each pair is re-sorted
+	// with Math.min/max rather than assumed to keep its original order.
+	function projectOntoTarget(points, targetKg) {
+		return points.map((p) => {
+			const mean = targetKg - p.meanKg;
+			const boxA = targetKg - p.lowKg;
+			const boxB = targetKg - p.highKg;
+			const whiskerA = targetKg - p.minKg;
+			const whiskerB = targetKg - p.maxKg;
+			return {
+				label: p.label,
+				count: p.count,
+				hasRange: p.hasRange,
+				meanKg: mean,
+				meanLabel: mean.toFixed(1) + ' kg',
+				lowKg: Math.min(boxA, boxB),
+				highKg: Math.max(boxA, boxB),
+				minKg: Math.min(whiskerA, whiskerB),
+				maxKg: Math.max(whiskerA, whiskerB),
+			};
+		});
+	}
+
+	// currentTargetKg reads the "Weigh-in calculator" target field, if it
+	// holds a usable positive number.
+	function currentTargetKg() {
+		const input = document.getElementById('overnight-calc-target');
+		if (!input) return null;
+		const value = parseFloat(input.value);
+		return !Number.isNaN(value) && value > 0 ? value : null;
+	}
+
 	function renderChart(data, checked) {
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
@@ -620,8 +659,15 @@
 		canvas.hidden = false;
 		if (emptyEl) emptyEl.hidden = true;
 
-		const labels = points.map((p) => p.label);
-		const boxes = points.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
+		const targetKg = currentTargetKg();
+		const plotPoints = targetKg === null ? points : projectOntoTarget(points, targetKg);
+
+		const labels = plotPoints.map((p) => p.label);
+		const boxes = plotPoints.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
+		// Bar color always follows the underlying overnight-change sign
+		// (loss/gain), never the projected absolute weight — otherwise
+		// every bar would flip to the same color once projected, since a
+		// bedtime ceiling in kg is always positive.
 		const colors = points.map((p) => colorFor(p.meanKg));
 
 		try {
@@ -631,7 +677,7 @@
 					datasets: [
 						{
 							type: 'bar',
-							label: 'Mean ± 1 SD',
+							label: targetKg === null ? 'Mean ± 1 SD' : 'Bedtime ceiling ± 1 SD',
 							data: boxes,
 							backgroundColor: colors,
 							borderRadius: 4,
@@ -647,6 +693,11 @@
 							ticks: { color: cssVar('--on-surface-muted') },
 						},
 						y: {
+							title: {
+								display: true,
+								text: targetKg === null ? 'Overnight change (kg)' : 'Bedtime weight (kg)',
+								color: cssVar('--on-surface-muted'),
+							},
 							grid: { color: cssVar('--chart-grid') },
 							ticks: {
 								color: cssVar('--on-surface-muted'),
@@ -658,10 +709,10 @@
 						legend: { display: false },
 						tooltip: {
 							callbacks: {
-								title: (items) => points[items[0].dataIndex].label,
+								title: (items) => plotPoints[items[0].dataIndex].label,
 								label: (item) => {
-									const p = points[item.dataIndex];
-									const lines = [`Mean: ${p.meanLabel}`];
+									const p = plotPoints[item.dataIndex];
+									const lines = [(targetKg === null ? 'Mean: ' : 'Typical bedtime ceiling: ') + p.meanLabel];
 									lines.push(
 										p.hasRange
 											? `±1 SD box: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg`
@@ -673,7 +724,7 @@
 								},
 							},
 						},
-						overnightBoxPlot: { points },
+						overnightBoxPlot: { points: plotPoints },
 					},
 				},
 			});
@@ -778,6 +829,10 @@
 	});
 	document.body.addEventListener('input', (event) => {
 		if (event.target.id === 'overnight-tonight-input') recomputeTonightCalculator(cachedData, checkedWindowLabels());
+		// Re-render the chart itself so entering/clearing a target
+		// immediately projects the boxes onto (or back off of) bedtime
+		// weight — this is the whole point of merging the two cards.
+		if (event.target.id === 'overnight-calc-target') renderAll();
 	});
 	refresh();
 })();

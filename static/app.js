@@ -29,44 +29,6 @@ if ('serviceWorker' in navigator) {
 	window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
 }
 
-// Overnight tab's weigh-in calculator: converts a target morning weight into
-// a suggested bedtime ceiling, using whatever overnight-loss stats the
-// (possibly just-swapped) #overnight-content fragment currently carries.
-// Element references are looked up fresh on every call rather than cached
-// once — #overnight-content is fully replaced by each htmx swap when the
-// range changes, so anything captured at page load would go stale.
-function recomputeOvernightCalculator() {
-	const target = document.getElementById('overnight-calc-target');
-	const typicalOut = document.getElementById('overnight-calc-typical');
-	const safeOut = document.getElementById('overnight-calc-safe');
-	if (!target || !typicalOut || !safeOut) return;
-
-	const stats = document.querySelector('[data-role="overnight-stats"]');
-	const targetKg = parseFloat(target.value);
-	if (!stats || Number.isNaN(targetKg) || targetKg <= 0) {
-		typicalOut.textContent = '–';
-		safeOut.textContent = '–';
-		return;
-	}
-
-	// Grams throughout, matching how the server avoids float rounding error —
-	// only the final division back to kg for display is floating point.
-	const targetG = Math.round(targetKg * 1000);
-	const avgG = Number(stats.dataset.avgG);
-	const bestCaseG = Number(stats.dataset.bestCaseG);
-	typicalOut.textContent = ((targetG - avgG) / 1000).toFixed(1) + ' kg';
-	safeOut.textContent = ((targetG - bestCaseG) / 1000).toFixed(1) + ' kg';
-}
-
-document.body.addEventListener('input', (event) => {
-	if (event.target.id === 'overnight-calc-target') recomputeOvernightCalculator();
-});
-// Recompute unconditionally on any htmx swap rather than checking which
-// element triggered it — cheap, and the function already no-ops safely if
-// the calculator isn't the thing that changed.
-document.body.addEventListener('htmx:afterSwap', recomputeOvernightCalculator);
-recomputeOvernightCalculator();
-
 // initTimeRangePicker wires up one instance of the shared Grafana-style
 // time-range-picker (templates/time_range_picker.html): a button showing
 // the active range, opening a popover of quick presets plus a custom

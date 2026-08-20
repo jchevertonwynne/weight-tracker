@@ -27,10 +27,7 @@
 		{{if .Overnight.Empty}}
 			<p class="empty">{{.Overnight.Empty}}</p>
 		{{else}}
-			<div class="summary-stats"
-				data-role="overnight-stats"
-				data-avg-g="{{.Overnight.AvgDeltaG}}"
-				data-best-case-g="{{.Overnight.BestCaseG}}">
+			<div class="summary-stats" data-role="overnight-stats">
 				<div class="stat-tile">
 					<span class="stat-label">Nights logged</span>
 					<span class="stat-value">{{.Overnight.Count}}</span>
@@ -56,12 +53,22 @@
 	</section>
 
 	<section class="card">
-		<h2>Range by timescale</h2>
+		<h2>Weigh-in calculator</h2>
 		<p class="empty">
-			Each box spans the mean overnight change ± 1 standard deviation for
-			that window, with whiskers stretching out to the largest loss and
-			largest gain actually seen in it.
+			Enter the weight you need to hit at tomorrow's morning weigh-in.
+			With nothing entered, the boxes below show the overnight
+			<em>change</em> (kg) for each checked window; once you enter a
+			target, they shift onto your actual bedtime-weight ceiling — so
+			you can see not just a single "safe" number but the full range
+			each window's history supports.
 		</p>
+		<div class="entry-form">
+			<label class="field">
+				<span>Target morning weight (kg)</span>
+				<input type="number" step="0.1" min="0" id="overnight-calc-target"
+					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5">
+			</label>
+		</div>
 		<div class="chart-controls-row" id="overnight-window-toggles">
 			<label class="field field-checkbox">
 				<input type="checkbox" id="overnight-window-toggle-7d" data-window="7d" checked hx-preserve="true" autocomplete="off">
@@ -78,33 +85,6 @@
 		</div>
 		<p class="empty" id="overnight-window-empty" hidden></p>
 		<canvas id="overnight-window-chart" height="220"></canvas>
-	</section>
-
-	<section class="card">
-		<h2>Weigh-in calculator</h2>
-		<p class="empty">
-			Enter the weight you need to hit at tomorrow's morning weigh-in —
-			this shows the most you can weigh tonight and still make it,
-			based on the overnight change above.
-		</p>
-		<div class="entry-form">
-			<label class="field">
-				<span>Target morning weight (kg)</span>
-				<input type="number" step="0.1" min="0" id="overnight-calc-target"
-					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5"
-					{{if .Overnight.Empty}}disabled{{end}}>
-			</label>
-		</div>
-		<div class="summary-stats">
-			<div class="stat-tile">
-				<span class="stat-label">Typical bedtime ceiling</span>
-				<span class="stat-value" id="overnight-calc-typical">–</span>
-			</div>
-			<div class="stat-tile">
-				<span class="stat-label">Safe bedtime ceiling</span>
-				<span class="stat-value" id="overnight-calc-safe">–</span>
-			</div>
-		</div>
 	</section>
 
 	<section class="card">
