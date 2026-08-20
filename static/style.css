@@ -185,8 +185,28 @@ dialog.modal::backdrop {
 	padding: 1.25rem;
 }
 
+/* One rule owns the spacing between a card's children, instead of each
+   child bringing its own margin. Previously that spacing depended on which
+   element happened to come next: h2 and .chart-controls carried a 1rem
+   bottom margin, a <p class="empty"> fell back to the browser's default,
+   and .entry-form, .chart-controls-row and <canvas> had none at all — so
+   the weigh-in calculator's input, toggles and chart were jammed together
+   while other pairs were spaced.
+
+   Margins rather than making .card a flex column: a bare <canvas> as a
+   flex item can grow on every Chart.js resize, and two of these cards
+   hold one. */
+.card > * {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.card > * + * {
+	margin-top: 1rem;
+}
+
 .card h2 {
-	margin: 0 0 1rem;
+	margin: 0;
 	font-size: 1rem;
 	font-weight: 500;
 	color: var(--on-surface-muted);
@@ -417,7 +437,6 @@ select:focus {
 	display: flex;
 	flex-direction: column;
 	gap: 0.75rem;
-	margin-bottom: 1rem;
 }
 
 .chart-controls-row {
@@ -570,4 +589,29 @@ select:focus {
 .stat-value {
 	font-size: 1.1rem;
 	font-weight: 500;
+}
+
+/* #overnight-content is the htmx swap target wrapping the Overnight tab's
+   four cards. .tab-panel's gap only reaches its own children, and this div
+   is one of them, so without a gap here those four cards butted together
+   while the Filter card above them sat properly spaced. Cards only, no
+   canvas child, so flex is safe. */
+#overnight-content {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+
+/* The "Will I make it?" verdicts are a full sentence each, not the short
+   figures .summary-stats is shaped for, so they stack instead of flowing
+   into columns — side by side, the second column's chip sat level with the
+   first column's label and the pairing was easy to misread. */
+#overnight-tonight-results {
+	flex-direction: column;
+	/* Explicit, because .summary-stats sets flex-wrap: wrap — harmless in a
+	   row, but in a column it is exactly what would put 30d back alongside
+	   7d the moment the container gained a height constraint. */
+	flex-wrap: nowrap;
+	align-items: flex-start;
+	gap: 0.75rem;
 }
