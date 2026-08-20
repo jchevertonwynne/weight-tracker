@@ -527,8 +527,28 @@ function calendarTicks(axis) {
 					legend: { display: false },
 					tooltip: {
 						callbacks: {
-							title: (items) => (items[0] && items[0].raw.date) || '',
-							label: (item) => (item.raw && item.raw.value) || item.formattedValue,
+							// Raw weigh-ins arrive with their date and value
+							// preformatted by the server. The trend and goal
+							// series are plain {x, y}, so they had neither: the
+							// tooltip lost its date entirely once raw data was
+							// hidden, and the value showed as a bare number.
+							// Both fall back to deriving it from the point.
+							title: (items) => {
+								const point = items[0] && items[0].raw;
+								if (!point) return '';
+								// Matches timerange.DateLabel, which formats the
+								// raw points server-side.
+								return point.date || new Date(point.x).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+							},
+							label: (item) => {
+								const value = (item.raw && item.raw.value) || `${Number(item.parsed.y).toFixed(1)} kg`;
+								// Naming the series matters once more than one
+								// is on the chart — otherwise a weigh-in, its
+								// trend and the goal are three unlabelled
+								// numbers.
+								const name = item.dataset && item.dataset.label;
+								return name ? `${name}: ${value}` : value;
+							},
 						},
 					},
 					markerLines: { markers: data.markers || [] },
