@@ -379,7 +379,8 @@
 	}
 
 	function buildConfig(data) {
-		const trendAvailable = !data.isBar && data.trend && data.trend.length >= 2;
+		const hasSplitTrend = (data.trendMorning && data.trendMorning.length >= 2) || (data.trendEvening && data.trendEvening.length >= 2);
+		const trendAvailable = !data.isBar && ((data.trend && data.trend.length >= 2) || hasSplitTrend);
 		const rawCheckbox = form.elements['show-raw'];
 		const trendCheckbox = form.elements['show-trend'];
 		let showRaw = rawCheckbox.checked;
@@ -452,15 +453,43 @@
 				}
 			}
 			if (showTrend) {
-				datasets.push({
-					type: 'line',
-					label: 'Trend',
-					data: data.trend,
-					borderColor: cssVar('--primary'),
-					borderWidth: 2.5,
-					pointRadius: 0,
-					tension: 0.2,
-				});
+				if (data.trendMorning && data.trendMorning.length >= 2) {
+					// Colored to match its raw line (same hue, no points, a
+					// thicker smoothed curve) so it's clear which period's
+					// trend it is, rather than one line blending both
+					// periods' readings together.
+					datasets.push({
+						type: 'line',
+						label: 'Morning trend',
+						data: data.trendMorning,
+						borderColor: cssVar('--morning'),
+						borderWidth: 2.5,
+						pointRadius: 0,
+						tension: 0.2,
+					});
+				}
+				if (data.trendEvening && data.trendEvening.length >= 2) {
+					datasets.push({
+						type: 'line',
+						label: 'Evening trend',
+						data: data.trendEvening,
+						borderColor: cssVar('--evening'),
+						borderWidth: 2.5,
+						pointRadius: 0,
+						tension: 0.2,
+					});
+				}
+				if (data.trend && data.trend.length >= 2) {
+					datasets.push({
+						type: 'line',
+						label: 'Trend',
+						data: data.trend,
+						borderColor: cssVar('--primary'),
+						borderWidth: 2.5,
+						pointRadius: 0,
+						tension: 0.2,
+					});
+				}
 			}
 			if (data.goals && data.goals.length >= 2) {
 				datasets.push({

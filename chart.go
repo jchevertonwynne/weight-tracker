@@ -36,15 +36,23 @@ type XY struct {
 }
 
 type ChartData struct {
-	HasData bool          `json:"hasData"`
-	Empty   string        `json:"empty,omitempty"`
-	IsBar   bool          `json:"isBar"`
-	XMin    int64         `json:"xMin,omitempty"`
-	XMax    int64         `json:"xMax,omitempty"`
-	Points  []ChartPoint  `json:"points"`
-	Trend   []XY          `json:"trend,omitempty"`
-	Goals   []XY          `json:"goals,omitempty"`
-	Markers []MarkerPoint `json:"markers,omitempty"`
+	HasData bool         `json:"hasData"`
+	Empty   string       `json:"empty,omitempty"`
+	IsBar   bool         `json:"isBar"`
+	XMin    int64        `json:"xMin,omitempty"`
+	XMax    int64        `json:"xMax,omitempty"`
+	Points  []ChartPoint `json:"points"`
+	// Trend is the single rolling-average line for a single-period series
+	// (morning/evening only, or a delta series). The "all" series — both
+	// periods at once — instead splits it into TrendMorning/TrendEvening,
+	// each smoothed over its own period's points, since averaging morning
+	// and evening readings together produces a line that isn't a rolling
+	// average of either.
+	Trend        []XY          `json:"trend,omitempty"`
+	TrendMorning []XY          `json:"trendMorning,omitempty"`
+	TrendEvening []XY          `json:"trendEvening,omitempty"`
+	Goals        []XY          `json:"goals,omitempty"`
+	Markers      []MarkerPoint `json:"markers,omitempty"`
 }
 
 func formatDateLabel(t time.Time) string {
@@ -279,6 +287,34 @@ func filterByWindow(pts []chartRawPoint, window rangeWindow) []chartRawPoint {
 	return out
 }
 
+// filterByClass keeps only points of the given class, preserving order —
+// used to compute a rolling trend per period rather than one trend blending
+// morning and evening readings together.
+func filterByClass(pts []chartRawPoint, class string) []chartRawPoint {
+	var out []chartRawPoint
+	for _, p := range pts {
+		if p.class == class {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// trendXY runs the rolling average and window-trims it down to plain XY
+// points ready for the client, or nil if fewer than 2 points survive — a
+// single-point "trend" isn't a line.
+func trendXY(source []chartRawPoint, window rangeWindow) []XY {
+	visible := filterByWindow(rollingTrend(source, trendWindowDays), window)
+	if len(visible) < 2 {
+		return nil
+	}
+	xy := make([]XY, len(visible))
+	for i, p := range visible {
+		xy[i] = XY{X: msOf(p.t), Y: p.val}
+	}
+	return xy
+}
+
 func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, today time.Time) ChartData {
 	chrono, overnightByID, dailyByID := chronologicalWithDeltas(allEntries)
 	window := resolveRangeWindow(rangeParam, fromParam, untilParam, today)
@@ -379,11 +415,14 @@ func buildChartData(allEntries []db.Entry, goals []db.Goal, markers []db.Marker,
 	// The trend line and goal reference lines only apply to the continuous
 	// weight-value series (all/morning/evening), never the delta bar charts.
 	if !isBar {
-		trendVisible := filterByWindow(rollingTrend(trendSourcePts, trendWindowDays), window)
-		if len(trendVisible) >= 2 {
-			for _, p := range trendVisible {
-				data.Trend = append(data.Trend, XY{X: msOf(p.t), Y: p.val})
-			}
+		if seriesParam == "all" {
+			// Split into a trend per period rather than one line averaging
+			// morning and evening readings together, which would smooth
+			// over the very gap between them that the raw lines show.
+			data.TrendMorning = trendXY(filterByClass(trendSourcePts, "morning"), window)
+			data.TrendEvening = trendXY(filterByClass(trendSourcePts, "evening"), window)
+		} else {
+			data.Trend = trendXY(trendSourcePts, window)
 		}
 
 		if len(goals) > 0 {

@@ -320,7 +320,9 @@ func TestBuildChartData(t *testing.T) {
 
 	// The trend is computed over full history and only then trimmed, so the
 	// first visible point already carries the smoothing from data before it
-	// rather than restarting at its own raw value.
+	// rather than restarting at its own raw value. The "all" series splits
+	// it per period, so morning and evening are each smoothed only over
+	// their own readings.
 	t.Run("trend is smoothed using data from before the visible range", func(t *testing.T) {
 		// Visible range starts on the 15th, so the 14th's two readings are
 		// off-chart but must still feed the first visible trend value.
@@ -328,17 +330,25 @@ func TestBuildChartData(t *testing.T) {
 		if len(got.Points) != 3 {
 			t.Fatalf("got %d visible points, want 3", len(got.Points))
 		}
-		if len(got.Trend) != 3 {
-			t.Fatalf("got %d trend points, want one per visible point", len(got.Trend))
+		// Morning source (full history): Aug14 84.0, Aug15 83.5, Aug16 83.0;
+		// the 15th and 16th are visible.
+		if len(got.TrendMorning) != 2 {
+			t.Fatalf("got %d morning trend points, want 2", len(got.TrendMorning))
 		}
 		// The first visible point averages in the off-chart 14th rather than
 		// restarting at its own raw 83.5.
-		wantFirst := (84.0 + 85.0 + 83.5) / 3
-		if !nearlyEqual(got.Trend[0].Y, wantFirst) {
-			t.Errorf("first trend point = %v, want %v (smoothed across off-chart history)", got.Trend[0].Y, wantFirst)
+		wantFirst := (84.0 + 83.5) / 2
+		if !nearlyEqual(got.TrendMorning[0].Y, wantFirst) {
+			t.Errorf("first morning trend point = %v, want %v (smoothed across off-chart history)", got.TrendMorning[0].Y, wantFirst)
 		}
-		if nearlyEqual(got.Trend[0].Y, 83.5) {
-			t.Error("first trend point equals its own raw value — the window was truncated at the range edge")
+		if nearlyEqual(got.TrendMorning[0].Y, 83.5) {
+			t.Error("first morning trend point equals its own raw value — the window was truncated at the range edge")
+		}
+		// Evening source (full history) is just Aug14 and Aug15; the 14th is
+		// off-chart, leaving a single visible evening point — not enough to
+		// draw a trend line.
+		if len(got.TrendEvening) != 0 {
+			t.Errorf("got %d evening trend points, want 0 (only one evening reading is visible)", len(got.TrendEvening))
 		}
 	})
 
@@ -348,15 +358,21 @@ func TestBuildChartData(t *testing.T) {
 		if len(got.Points) != 1 {
 			t.Fatalf("got %d visible points, want 1", len(got.Points))
 		}
-		if len(got.Trend) != 0 {
-			t.Errorf("got %d trend points, want none", len(got.Trend))
+		if len(got.TrendMorning) != 0 {
+			t.Errorf("got %d morning trend points, want none", len(got.TrendMorning))
+		}
+		if len(got.TrendEvening) != 0 {
+			t.Errorf("got %d evening trend points, want none", len(got.TrendEvening))
 		}
 	})
 
 	t.Run("a single point produces no trend line", func(t *testing.T) {
 		got := buildChartData(entries[:1], nil, nil, "30", "all", "", "", today)
-		if len(got.Trend) != 0 {
-			t.Errorf("got %d trend points for a single entry, want none", len(got.Trend))
+		if len(got.TrendMorning) != 0 {
+			t.Errorf("got %d morning trend points for a single entry, want none", len(got.TrendMorning))
+		}
+		if len(got.TrendEvening) != 0 {
+			t.Errorf("got %d evening trend points for a single entry, want none", len(got.TrendEvening))
 		}
 	})
 
