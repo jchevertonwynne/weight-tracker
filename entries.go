@@ -15,6 +15,7 @@ import (
 // from RecordedAt at render time via db.DetectPeriod.
 type Row struct {
 	ID              int64
+	RecordedAt      time.Time // kept for filterRows; not rendered directly (see RecordedAtLabel)
 	RecordedAtLabel string
 	RecordedAtDate  string // for the edit form's date input
 	RecordedAtTime  string // for the edit form's time input
@@ -143,6 +144,7 @@ func buildRows(entries []db.Entry) []Row {
 		period := entryPeriod(e)
 		r := Row{
 			ID:              e.ID,
+			RecordedAt:      e.RecordedAt,
 			RecordedAtLabel: e.RecordedAt.Format("Jan 2, 2006 15:04"),
 			RecordedAtDate:  e.RecordedAt.Format("2006-01-02"),
 			RecordedAtTime:  e.RecordedAt.Format("15:04"),
@@ -169,6 +171,28 @@ func buildRows(entries []db.Entry) []Row {
 	return rows
 }
 
+// filterRows keeps rows whose period matches periodParam ("" or "all" for
+// no filter) and whose RecordedAt falls within window.
+//
+// This runs on the output of buildRows rather than filtering the entries
+// beforehand, since the overnight/daily deltas need the *full* chronological
+// context to compute correctly — filtering to "morning only" before
+// chronologicalWithDeltas ran would starve it of the evening entries an
+// overnight delta is computed against, silently dropping every chip.
+func filterRows(rows []Row, periodParam string, window rangeWindow) []Row {
+	var out []Row
+	for _, row := range rows {
+		if periodParam != "" && periodParam != "all" && row.Period != periodParam {
+			continue
+		}
+		if !window.contains(row.RecordedAt) {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // parseRecordedAt reads the split recorded_at_date/recorded_at_time fields.
 func parseRecordedAt(r *http.Request) (time.Time, error) {
 	return parseDateTimeFields(r, "recorded_at")
@@ -185,6 +209,27 @@ func (s *server) renderEntriesList(w http.ResponseWriter) {
 	}
 	w.Header().Set("HX-Trigger", "entries-changed")
 	data := struct{ Rows []Row }{Rows: buildRows(entries)}
+	if err := tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleEntriesList renders the history list filtered by the entries-filter
+// form (period/from/until, same param names and window semantics as the
+// chart's own custom range). Registered separately from the CRUD handlers
+// above so a create/update/delete's own response can keep rendering the
+// unfiltered list — the filter form re-applies itself afterward via
+// hx-trigger="... entries-changed from:body", so the visible list ends up
+// filtered either way, just via one extra round-trip.
+func (s *server) handleEntriesList(w http.ResponseWriter, r *http.Request) {
+	entries, err := db.ListEntries(s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	periodParam := r.URL.Query().Get("period")
+	window := customRangeWindow(r.URL.Query().Get("from"), r.URL.Query().Get("until"), time.Now())
+	data := struct{ Rows []Row }{Rows: filterRows(buildRows(entries), periodParam, window)}
 	if err := tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

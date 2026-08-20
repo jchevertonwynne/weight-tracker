@@ -1,3 +1,33 @@
+{{define "entries-filter"}}
+<section class="card">
+	<h2>Filter</h2>
+	<form id="entries-filter" class="chart-controls"
+		hx-get="/entries"
+		hx-target="#entries-list"
+		hx-swap="outerHTML"
+		hx-trigger="change, entries-changed from:body">
+		<div class="chart-controls-row">
+			<label class="field">
+				<span>Period</span>
+				<select name="period" autocomplete="off">
+					<option value="" selected>All</option>
+					<option value="morning">Morning</option>
+					<option value="evening">Evening</option>
+				</select>
+			</label>
+			<label class="field">
+				<span>From</span>
+				<input type="date" name="from" autocomplete="off">
+			</label>
+			<label class="field">
+				<span>Until</span>
+				<input type="date" name="until" autocomplete="off">
+			</label>
+		</div>
+	</form>
+</section>
+{{end}}
+
 {{define "entries-list"}}
 <section class="card" id="entries-list">
 	<h2>History</h2>
