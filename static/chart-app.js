@@ -638,7 +638,15 @@
 	// canvas, so Chart.js has no idea they exist and would happily clip
 	// them; every drawn value is folded in here rather than just the bar's
 	// own [low, high].
-	const axisPaddingKg = 1.5;
+	// Padding is a fraction of the spread rather than a fixed number of
+	// kilograms: these boxes are usually about a kilogram tall, and a fixed
+	// pad wide enough to look right on a 5kg spread leaves a 1kg one
+	// stranded in the middle of a mostly empty panel. The floor keeps a
+	// degenerate case readable — one night logged collapses the box to a
+	// single value, and a purely proportional pad would give it a
+	// zero-height axis.
+	const axisPaddingFraction = 0.1;
+	const minAxisPaddingKg = 0.2;
 	function yAxisBounds(points) {
 		let lo = Infinity;
 		let hi = -Infinity;
@@ -653,7 +661,8 @@
 		// No finite values at all: leave the axis to Chart.js rather than
 		// handing it min: Infinity.
 		if (lo === Infinity) return {};
-		return { min: lo - axisPaddingKg, max: hi + axisPaddingKg };
+		const pad = Math.max((hi - lo) * axisPaddingFraction, minAxisPaddingKg);
+		return { min: lo - pad, max: hi + pad };
 	}
 
 	function renderChart(data, checked) {
