@@ -568,6 +568,35 @@
 				ctx.lineTo(x + meanTickHalfWidth, yMean);
 				ctx.stroke();
 			});
+
+			// The target line. Once the boxes are projected onto bedtime
+			// weight, the distance from a box down to this line *is* the
+			// overnight loss it assumes — without it drawn, the numbers on
+			// the axis are absolute weights with nothing to read them
+			// against. Dashed in --goal to match the goal line on the main
+			// chart, so the two read as the same kind of reference.
+			const { targetKg } = opts;
+			if (typeof targetKg === 'number' && Number.isFinite(targetKg)) {
+				const { chartArea } = chartInstance;
+				const y = scales.y.getPixelForValue(targetKg);
+				ctx.strokeStyle = cssVar('--goal');
+				ctx.lineWidth = 1.5;
+				ctx.setLineDash([6, 3]);
+				ctx.beginPath();
+				ctx.moveTo(chartArea.left, y);
+				ctx.lineTo(chartArea.right, y);
+				ctx.stroke();
+				ctx.setLineDash([]);
+
+				ctx.fillStyle = cssVar('--goal');
+				ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
+				ctx.textAlign = 'right';
+				// Sits above the line, unless the line is close enough to the
+				// top that the label would be clipped by the plot area.
+				const above = y - 4 > chartArea.top + 10;
+				ctx.textBaseline = above ? 'bottom' : 'top';
+				ctx.fillText(`Target ${targetKg.toFixed(1)} kg`, chartArea.right - 4, above ? y - 4 : y + 4);
+			}
 			ctx.restore();
 		},
 	};
@@ -647,9 +676,17 @@
 	// zero-height axis.
 	const axisPaddingFraction = 0.1;
 	const minAxisPaddingKg = 0.2;
-	function yAxisBounds(points) {
+	// targetKg is folded in so the target line is always on screen. It is
+	// usually below every box — that gap is the overnight loss — so without
+	// this the axis would stop short and the line would be drawn outside the
+	// plot area.
+	function yAxisBounds(points, targetKg) {
 		let lo = Infinity;
 		let hi = -Infinity;
+		if (typeof targetKg === 'number' && Number.isFinite(targetKg)) {
+			lo = targetKg;
+			hi = targetKg;
+		}
 		points.forEach((p) => {
 			[p.minKg, p.maxKg, p.lowKg, p.highKg, p.meanKg].forEach((value) => {
 				if (typeof value === 'number' && Number.isFinite(value)) {
@@ -729,7 +766,7 @@
 							ticks: { color: cssVar('--on-surface-muted') },
 						},
 						y: {
-							...yAxisBounds(plotPoints),
+							...yAxisBounds(plotPoints, targetKg),
 							title: {
 								display: true,
 								text: targetKg === null ? 'Overnight change (kg)' : 'Bedtime weight (kg)',
@@ -761,7 +798,7 @@
 								},
 							},
 						},
-						overnightBoxPlot: { points: plotPoints },
+						overnightBoxPlot: { points: plotPoints, targetKg },
 					},
 				},
 			});
