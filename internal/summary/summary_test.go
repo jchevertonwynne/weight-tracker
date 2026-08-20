@@ -1,12 +1,22 @@
-package main
+package summary
 
 import (
 	"testing"
+	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/testsupport"
 )
 
-func TestBuildWeeklySummary(t *testing.T) {
+func at(t *testing.T, s string) time.Time { return testsupport.At(t, s) }
+
+func entry(id int64, recordedAt time.Time, weightKg float64, override string) db.Entry {
+	return testsupport.Entry(id, recordedAt, weightKg, override)
+}
+
+func nearlyEqual(a, b float64) bool { return testsupport.NearlyEqual(a, b) }
+
+func TestBuild(t *testing.T) {
 	now := at(t, "2026-08-16 12:00")
 
 	t.Run("compares this week's morning average to last week's", func(t *testing.T) {
@@ -18,7 +28,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 			entry(3, at(t, "2026-08-08 07:00"), 83.0, ""),
 			entry(4, at(t, "2026-08-06 07:00"), 83.4, ""),
 		}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.Empty != "" {
 			t.Fatalf("Empty = %q, want a populated summary", got.Empty)
 		}
@@ -44,7 +54,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:00"), 82.0, ""),
 			entry(2, at(t, "2026-08-15 21:00"), 90.0, ""), // must not skew the average
 		}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.ThisWeekAvg != "82.0 kg" {
 			t.Errorf("ThisWeekAvg = %q, want the morning entry alone (82.0 kg)", got.ThisWeekAvg)
 		}
@@ -55,7 +65,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 			// Auto-detects as evening, overridden to morning, so it counts.
 			entry(1, at(t, "2026-08-15 21:00"), 82.0, "morning"),
 		}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.ThisWeekAvg != "82.0 kg" {
 			t.Errorf("ThisWeekAvg = %q, want the overridden entry to count", got.ThisWeekAvg)
 		}
@@ -66,7 +76,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:00"), 83.0, ""),
 			entry(2, at(t, "2026-08-08 07:00"), 82.0, ""),
 		}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.Delta != "+1.0 kg" {
 			t.Errorf("Delta = %q, want %q", got.Delta, "+1.0 kg")
 		}
@@ -77,7 +87,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 
 	t.Run("no comparison when last week has no morning entries", func(t *testing.T) {
 		entries := []db.Entry{entry(1, at(t, "2026-08-15 07:00"), 82.0, "")}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.ThisWeekAvg == "" {
 			t.Error("ThisWeekAvg is blank, want this week's average")
 		}
@@ -94,14 +104,14 @@ func TestBuildWeeklySummary(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:00"), 82.0, ""),
 			entry(2, at(t, "2026-06-01 07:00"), 95.0, ""), // ancient, must not count
 		}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.HasComparison {
 			t.Error("HasComparison = true, want false — the old entry is outside both windows")
 		}
 	})
 
 	t.Run("no data this week reports the empty state", func(t *testing.T) {
-		got := buildWeeklySummary(nil, now)
+		got := Build(nil, now)
 		if got.Empty == "" {
 			t.Error("Empty is blank, want an explanatory message")
 		}
@@ -112,7 +122,7 @@ func TestBuildWeeklySummary(t *testing.T) {
 
 	t.Run("only stale data also reports the empty state", func(t *testing.T) {
 		entries := []db.Entry{entry(1, at(t, "2026-08-08 07:00"), 83.0, "")}
-		got := buildWeeklySummary(entries, now)
+		got := Build(entries, now)
 		if got.Empty == "" {
 			t.Error("Empty is blank, want the empty state when only last week has data")
 		}

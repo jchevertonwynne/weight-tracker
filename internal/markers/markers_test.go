@@ -1,18 +1,21 @@
-package main
+package markers
 
 import (
 	"testing"
+	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/testsupport"
 )
 
+func at(t *testing.T, s string) time.Time { return testsupport.At(t, s) }
+
 func marker(id int64, date string, note string, t *testing.T) db.Marker {
-	t.Helper()
-	return db.Marker{ID: id, Date: at(t, date+" 00:00"), Note: note}
+	return testsupport.Marker(id, date, note, t)
 }
 
-func TestBuildMarkerRows(t *testing.T) {
-	rows := buildMarkerRows([]db.Marker{marker(1, "2026-08-10", "started cutting", t)})
+func TestBuildRows(t *testing.T) {
+	rows := BuildRows([]db.Marker{marker(1, "2026-08-10", "started cutting", t)})
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
@@ -27,7 +30,7 @@ func TestBuildMarkerRows(t *testing.T) {
 	}
 }
 
-func TestVisibleMarkers(t *testing.T) {
+func TestVisible(t *testing.T) {
 	markers := []db.Marker{
 		marker(1, "2026-08-01", "before", t),
 		marker(2, "2026-08-10", "inside", t),
@@ -35,7 +38,7 @@ func TestVisibleMarkers(t *testing.T) {
 	}
 
 	t.Run("keeps only markers inside the range", func(t *testing.T) {
-		got := visibleMarkers(markers, at(t, "2026-08-05 07:00"), at(t, "2026-08-15 21:00"))
+		got := Visible(markers, at(t, "2026-08-05 07:00"), at(t, "2026-08-15 21:00"))
 		if len(got) != 1 {
 			t.Fatalf("got %d markers, want 1", len(got))
 		}
@@ -54,28 +57,28 @@ func TestVisibleMarkers(t *testing.T) {
 	// first visible entry sits earlier in that day than the entry's own
 	// timestamp — comparing exact instants would wrongly exclude it.
 	t.Run("includes a marker sharing the first entry's day", func(t *testing.T) {
-		got := visibleMarkers(markers, at(t, "2026-08-10 07:30"), at(t, "2026-08-15 21:00"))
+		got := Visible(markers, at(t, "2026-08-10 07:30"), at(t, "2026-08-15 21:00"))
 		if len(got) != 1 {
 			t.Fatalf("got %d markers, want the same-day marker kept", len(got))
 		}
 	})
 
 	t.Run("includes a marker sharing the last entry's day", func(t *testing.T) {
-		got := visibleMarkers(markers, at(t, "2026-08-05 07:00"), at(t, "2026-08-10 07:30"))
+		got := Visible(markers, at(t, "2026-08-05 07:00"), at(t, "2026-08-10 07:30"))
 		if len(got) != 1 {
 			t.Fatalf("got %d markers, want the same-day marker kept", len(got))
 		}
 	})
 
 	t.Run("no markers in range yields nothing", func(t *testing.T) {
-		got := visibleMarkers(markers, at(t, "2026-09-01 07:00"), at(t, "2026-09-30 21:00"))
+		got := Visible(markers, at(t, "2026-09-01 07:00"), at(t, "2026-09-30 21:00"))
 		if len(got) != 0 {
 			t.Errorf("got %+v, want nothing", got)
 		}
 	})
 
 	t.Run("no markers at all", func(t *testing.T) {
-		got := visibleMarkers(nil, at(t, "2026-08-05 07:00"), at(t, "2026-08-15 21:00"))
+		got := Visible(nil, at(t, "2026-08-05 07:00"), at(t, "2026-08-15 21:00"))
 		if len(got) != 0 {
 			t.Errorf("got %+v, want nothing", got)
 		}

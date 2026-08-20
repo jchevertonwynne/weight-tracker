@@ -2,115 +2,23 @@ package main
 
 import (
 	"net/http"
-	"sort"
 	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/goals"
 )
-
-// GoalRow is the display-ready form of a db.Goal for the goal-history list.
-type GoalRow struct {
-	ID                 int64
-	WeightKgRaw        string
-	WeightKgStr        string
-	EffectiveFromLabel string
-	EffectiveFromDate  string // for the edit form's date input
-	Current            bool
-}
-
-// currentGoal returns the goal in effect at now. goals is newest-first (as
-// db.ListGoals returns it), so the first entry whose EffectiveFrom is at or
-// before now is the current one — anything later hasn't taken effect yet.
-func currentGoal(goals []db.Goal, now time.Time) (db.Goal, bool) {
-	for _, g := range goals {
-		if !g.EffectiveFrom.After(now) {
-			return g, true
-		}
-	}
-	return db.Goal{}, false
-}
-
-// buildGoalRows assumes goals is newest-first (as returned by db.ListGoals).
-func buildGoalRows(goals []db.Goal, now time.Time) []GoalRow {
-	current, hasCurrent := currentGoal(goals, now)
-	rows := make([]GoalRow, len(goals))
-	for i, g := range goals {
-		rows[i] = GoalRow{
-			ID:                 g.ID,
-			WeightKgRaw:        formatKgInput(g.WeightG),
-			WeightKgStr:        formatKg(g.WeightG),
-			EffectiveFromLabel: g.EffectiveFrom.Format("Jan 2, 2006"),
-			EffectiveFromDate:  g.EffectiveFrom.Format("2006-01-02"),
-			Current:            hasCurrent && g.ID == current.ID,
-		}
-	}
-	return rows
-}
-
-// GoalSegment is one time-bounded goal validity period: [From, Until).
-// A zero Until means open-ended (the most recent goal).
-type GoalSegment struct {
-	WeightG int64
-	From    time.Time
-	Until   time.Time
-}
-
-// buildGoalSegments turns goals (any order) into non-overlapping segments:
-// each goal is valid from its own EffectiveFrom until the next goal's
-// EffectiveFrom (exclusive).
-func buildGoalSegments(goals []db.Goal) []GoalSegment {
-	if len(goals) == 0 {
-		return nil
-	}
-	sorted := make([]db.Goal, len(goals))
-	copy(sorted, goals)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].EffectiveFrom.Before(sorted[j].EffectiveFrom)
-	})
-
-	segs := make([]GoalSegment, len(sorted))
-	for i, g := range sorted {
-		seg := GoalSegment{WeightG: g.WeightG, From: g.EffectiveFrom}
-		if i+1 < len(sorted) {
-			seg.Until = sorted[i+1].EffectiveFrom
-		}
-		segs[i] = seg
-	}
-	return segs
-}
-
-// clipGoalSegments returns the portion of each segment that overlaps
-// [from, until]; open-ended segments are closed off at until. Segments with
-// no overlap are dropped entirely.
-func clipGoalSegments(segs []GoalSegment, from, until time.Time) []GoalSegment {
-	var out []GoalSegment
-	for _, s := range segs {
-		segFrom, segUntil := s.From, s.Until
-		if segUntil.IsZero() || segUntil.After(until) {
-			segUntil = until
-		}
-		if segFrom.Before(from) {
-			segFrom = from
-		}
-		if !segFrom.Before(segUntil) {
-			continue
-		}
-		out = append(out, GoalSegment{WeightG: s.WeightG, From: segFrom, Until: segUntil})
-	}
-	return out
-}
 
 // renderGoalsList re-renders the goals-list card and fires goals-changed so
 // the chart controls (which also affect the plotted goal reference lines)
 // refresh themselves too.
 func (s *server) renderGoalsList(w http.ResponseWriter) {
-	goals, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("HX-Trigger", "goals-changed")
-	data := struct{ Goals []GoalRow }{Goals: buildGoalRows(goals, time.Now())}
+	data := struct{ Goals []goals.Row }{Goals: goals.BuildRows(goalList, time.Now())}
 	if err := tmpl.ExecuteTemplate(w, "goals-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -145,7 +53,7 @@ func (s *server) handleGoalEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	rows := buildGoalRows([]db.Goal{goal}, time.Now())
+	rows := goals.BuildRows([]db.Goal{goal}, time.Now())
 	if err := tmpl.ExecuteTemplate(w, "goal-row-edit", rows[0]); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -157,12 +65,12 @@ func (s *server) handleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	goals, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, row := range buildGoalRows(goals, time.Now()) {
+	for _, row := range goals.BuildRows(goalList, time.Now()) {
 		if row.ID == id {
 			if err := tmpl.ExecuteTemplate(w, "goal-row", row); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

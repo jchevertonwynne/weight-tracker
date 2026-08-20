@@ -1,4 +1,4 @@
-package main
+package weight
 
 import (
 	"strconv"
@@ -6,33 +6,13 @@ import (
 	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/testsupport"
 )
 
-// at parses a "2006-01-02 15:04" wall-clock string in time.Local, matching
-// how the app itself interprets the date/time form inputs. Tests therefore
-// pass in any timezone the CI runner happens to use.
-func at(t *testing.T, s string) time.Time {
-	t.Helper()
-	parsed, err := time.ParseInLocation("2006-01-02 15:04", s, time.Local)
-	if err != nil {
-		t.Fatalf("parse test time %q: %v", s, err)
-	}
-	return parsed
-}
+func at(t *testing.T, s string) time.Time { return testsupport.At(t, s) }
 
-// entry builds a db.Entry with only the fields the delta logic reads.
-// entry builds a db.Entry from a kilogram figure, since that is what the
-// test cases read naturally; storage is grams, so it converts on the way in
-// exactly as the handlers do.
 func entry(id int64, recordedAt time.Time, weightKg float64, override string) db.Entry {
-	return db.Entry{ID: id, RecordedAt: recordedAt, WeightG: db.KgToGrams(weightKg), PeriodOverride: override}
-}
-
-const epsilon = 1e-9
-
-func nearlyEqual(a, b float64) bool {
-	diff := a - b
-	return diff < epsilon && diff > -epsilon
+	return testsupport.Entry(id, recordedAt, weightKg, override)
 }
 
 func TestEntryPeriod(t *testing.T) {
@@ -52,9 +32,9 @@ func TestEntryPeriod(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := entryPeriod(entry(1, at(t, tc.at), 80, tc.override))
+			got := EntryPeriod(entry(1, at(t, tc.at), 80, tc.override))
 			if got != tc.want {
-				t.Errorf("entryPeriod(%s, override=%q) = %q, want %q", tc.at, tc.override, got, tc.want)
+				t.Errorf("EntryPeriod(%s, override=%q) = %q, want %q", tc.at, tc.override, got, tc.want)
 			}
 		})
 	}
@@ -62,13 +42,13 @@ func TestEntryPeriod(t *testing.T) {
 
 func TestValidPeriodOverride(t *testing.T) {
 	for _, valid := range []string{"", "morning", "evening"} {
-		if !validPeriodOverride(valid) {
-			t.Errorf("validPeriodOverride(%q) = false, want true", valid)
+		if !ValidPeriodOverride(valid) {
+			t.Errorf("ValidPeriodOverride(%q) = false, want true", valid)
 		}
 	}
 	for _, invalid := range []string{"noon", "Morning", "afternoon", " "} {
-		if validPeriodOverride(invalid) {
-			t.Errorf("validPeriodOverride(%q) = true, want false", invalid)
+		if ValidPeriodOverride(invalid) {
+			t.Errorf("ValidPeriodOverride(%q) = true, want false", invalid)
 		}
 	}
 }
@@ -132,7 +112,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:30"), 82.4, ""),
 			entry(2, at(t, "2026-08-15 21:00"), 83.1, ""),
 		}
-		chrono, _, _ := chronologicalWithDeltas(entries)
+		chrono, _, _ := ChronologicalWithDeltas(entries)
 		var gotIDs []int64
 		for _, e := range chrono {
 			gotIDs = append(gotIDs, e.ID)
@@ -150,7 +130,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(2, at(t, "2026-08-16 07:15"), 82.0, ""),
 			entry(1, at(t, "2026-08-15 07:30"), 82.4, ""),
 		}
-		chronologicalWithDeltas(entries)
+		ChronologicalWithDeltas(entries)
 		if entries[0].ID != 2 {
 			t.Errorf("input slice was reordered: first ID = %d, want 2", entries[0].ID)
 		}
@@ -161,7 +141,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-15 21:00"), 83.1, ""),
 			entry(2, at(t, "2026-08-16 07:15"), 82.0, ""),
 		}
-		_, overnight, daily := chronologicalWithDeltas(entries)
+		_, overnight, daily := ChronologicalWithDeltas(entries)
 		got, ok := overnight[2]
 		if !ok {
 			t.Fatal("no overnight delta for the morning entry")
@@ -179,7 +159,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:30"), 82.4, ""),
 			entry(2, at(t, "2026-08-15 21:00"), 83.1, ""),
 		}
-		_, overnight, daily := chronologicalWithDeltas(entries)
+		_, overnight, daily := ChronologicalWithDeltas(entries)
 		got, ok := daily[2]
 		if !ok {
 			t.Fatal("no daily delta for the evening entry")
@@ -200,7 +180,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-16 01:25"), 83.5, ""),
 			entry(2, at(t, "2026-08-16 07:15"), 82.6, ""),
 		}
-		_, overnight, _ := chronologicalWithDeltas(entries)
+		_, overnight, _ := ChronologicalWithDeltas(entries)
 		got, ok := overnight[2]
 		if !ok {
 			t.Fatal("no overnight delta across the 4am boundary")
@@ -215,7 +195,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-13 21:00"), 83.1, ""),
 			entry(2, at(t, "2026-08-16 07:15"), 82.0, ""),
 		}
-		_, overnight, _ := chronologicalWithDeltas(entries)
+		_, overnight, _ := ChronologicalWithDeltas(entries)
 		if delta, ok := overnight[2]; ok {
 			t.Errorf("got overnight delta %v across a two-day gap, want none", delta)
 		}
@@ -226,7 +206,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-15 07:30"), 82.4, ""),
 			entry(2, at(t, "2026-08-16 21:00"), 83.1, ""),
 		}
-		_, _, daily := chronologicalWithDeltas(entries)
+		_, _, daily := ChronologicalWithDeltas(entries)
 		if delta, ok := daily[2]; ok {
 			t.Errorf("got daily delta %v for a different day, want none", delta)
 		}
@@ -239,7 +219,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(1, at(t, "2026-08-15 09:00"), 83.0, "evening"),
 			entry(2, at(t, "2026-08-16 07:15"), 82.0, ""),
 		}
-		_, overnight, _ := chronologicalWithDeltas(entries)
+		_, overnight, _ := ChronologicalWithDeltas(entries)
 		got, ok := overnight[2]
 		if !ok {
 			t.Fatal("no overnight delta when the partner was overridden to evening")
@@ -257,7 +237,7 @@ func TestChronologicalWithDeltas(t *testing.T) {
 			entry(4, at(t, "2026-08-15 21:00"), 84.2, ""),
 			entry(5, at(t, "2026-08-16 07:00"), 83.0, ""),
 		}
-		_, overnight, daily := chronologicalWithDeltas(entries)
+		_, overnight, daily := ChronologicalWithDeltas(entries)
 		wantOvernight := map[int64]int64{3: -1500, 5: -1200}
 		wantDaily := map[int64]int64{2: 1000, 4: 700}
 		if len(overnight) != len(wantOvernight) {
@@ -279,69 +259,11 @@ func TestChronologicalWithDeltas(t *testing.T) {
 	})
 
 	t.Run("no entries yields empty maps", func(t *testing.T) {
-		chrono, overnight, daily := chronologicalWithDeltas(nil)
+		chrono, overnight, daily := ChronologicalWithDeltas(nil)
 		if len(chrono) != 0 || len(overnight) != 0 || len(daily) != 0 {
 			t.Errorf("got %v/%v/%v, want all empty", chrono, overnight, daily)
 		}
 	})
-}
-
-func TestBuildRows(t *testing.T) {
-	entries := []db.Entry{
-		// Newest-first, as db.ListEntries returns them.
-		entry(2, at(t, "2026-08-16 07:15"), 82.04, ""),
-		entry(1, at(t, "2026-08-15 21:00"), 83.1, ""),
-	}
-	rows := buildRows(entries)
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
-	}
-
-	morning := rows[0]
-	if morning.PeriodLabel != "Morning" || morning.Period != "morning" {
-		t.Errorf("period = %q/%q, want morning/Morning", morning.Period, morning.PeriodLabel)
-	}
-	if morning.WeightKgStr != "82.0" {
-		t.Errorf("WeightKgStr = %q, want %q (display rounds to 1dp)", morning.WeightKgStr, "82.0")
-	}
-	if morning.WeightKgRaw != "82.04" {
-		t.Errorf("WeightKgRaw = %q, want %q (edit form keeps full precision)", morning.WeightKgRaw, "82.04")
-	}
-	if morning.RecordedAtDate != "2026-08-16" || morning.RecordedAtTime != "07:15" {
-		t.Errorf("edit-form fields = %q/%q, want 2026-08-16/07:15", morning.RecordedAtDate, morning.RecordedAtTime)
-	}
-	if morning.RecordedAtLabel != "Aug 16, 2026 07:15" {
-		t.Errorf("RecordedAtLabel = %q", morning.RecordedAtLabel)
-	}
-	if morning.OvernightDelta != "-1.1 kg" {
-		t.Errorf("OvernightDelta = %q, want %q", morning.OvernightDelta, "-1.1 kg")
-	}
-	if !morning.OvernightLoss {
-		t.Error("OvernightLoss = false, want true for a -1.1 kg change")
-	}
-
-	evening := rows[1]
-	if evening.PeriodLabel != "Evening" {
-		t.Errorf("PeriodLabel = %q, want Evening", evening.PeriodLabel)
-	}
-	if evening.OvernightDelta != "" {
-		t.Errorf("evening row has an overnight delta %q, want none", evening.OvernightDelta)
-	}
-}
-
-func TestBuildRowsFormatsGainsWithASign(t *testing.T) {
-	entries := []db.Entry{
-		entry(2, at(t, "2026-08-15 21:00"), 83.1, ""),
-		entry(1, at(t, "2026-08-15 07:30"), 82.4, ""),
-	}
-	rows := buildRows(entries)
-	evening := rows[0]
-	if evening.DailyDelta != "+0.7 kg" {
-		t.Errorf("DailyDelta = %q, want %q", evening.DailyDelta, "+0.7 kg")
-	}
-	if !evening.DailyGain {
-		t.Error("DailyGain = false, want true")
-	}
 }
 
 func TestFormatKg(t *testing.T) {
@@ -356,8 +278,8 @@ func TestFormatKg(t *testing.T) {
 		{0, "0.0"},
 	}
 	for _, tc := range tests {
-		if got := formatKg(tc.grams); got != tc.want {
-			t.Errorf("formatKg(%d) = %q, want %q", tc.grams, got, tc.want)
+		if got := FormatKg(tc.grams); got != tc.want {
+			t.Errorf("FormatKg(%d) = %q, want %q", tc.grams, got, tc.want)
 		}
 	}
 }
@@ -373,8 +295,8 @@ func TestFormatKgDelta(t *testing.T) {
 		{-50, "-0.1 kg"}, // rounds for display, but the sign is never lost
 	}
 	for _, tc := range tests {
-		if got := formatKgDelta(tc.grams); got != tc.want {
-			t.Errorf("formatKgDelta(%d) = %q, want %q", tc.grams, got, tc.want)
+		if got := FormatKgDelta(tc.grams); got != tc.want {
+			t.Errorf("FormatKgDelta(%d) = %q, want %q", tc.grams, got, tc.want)
 		}
 	}
 }
@@ -393,13 +315,13 @@ func TestFormatKgInputKeepsStoredPrecision(t *testing.T) {
 		{1, "0.001"},
 	}
 	for _, tc := range tests {
-		got := formatKgInput(tc.grams)
+		got := FormatKgInput(tc.grams)
 		if got != tc.want {
-			t.Errorf("formatKgInput(%d) = %q, want %q", tc.grams, got, tc.want)
+			t.Errorf("FormatKgInput(%d) = %q, want %q", tc.grams, got, tc.want)
 		}
 		// Whatever it renders must parse back to the same grams.
 		if back := db.KgToGrams(mustParseFloat(t, got)); back != tc.grams {
-			t.Errorf("formatKgInput(%d) = %q, which reads back as %d g", tc.grams, got, back)
+			t.Errorf("FormatKgInput(%d) = %q, which reads back as %d g", tc.grams, got, back)
 		}
 	}
 }

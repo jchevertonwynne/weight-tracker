@@ -1,68 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/summary"
 )
-
-// WeeklySummary compares the trailing 7-day average morning weight to the
-// preceding 7-day average, using morning entries only (the fasted reading
-// is less noisy than an evening one, and is what the rest of the app already
-// treats as the reference point for overnight deltas).
-type WeeklySummary struct {
-	Empty         string // set (with everything else zero) if no data this week
-	ThisWeekAvg   string
-	HasComparison bool // false if last week has zero qualifying entries
-	LastWeekAvg   string
-	Delta         string
-	DeltaIsLoss   bool
-}
-
-func buildWeeklySummary(entries []db.Entry, now time.Time) WeeklySummary {
-	thisStart := now.AddDate(0, 0, -7)
-	lastStart := now.AddDate(0, 0, -14)
-
-	var thisWeek, lastWeek []int64
-	for _, e := range entries {
-		if entryPeriod(e) != "morning" {
-			continue
-		}
-		switch {
-		case !e.RecordedAt.Before(thisStart) && !e.RecordedAt.After(now):
-			thisWeek = append(thisWeek, e.WeightG)
-		case !e.RecordedAt.Before(lastStart) && e.RecordedAt.Before(thisStart):
-			lastWeek = append(lastWeek, e.WeightG)
-		}
-	}
-
-	if len(thisWeek) == 0 {
-		return WeeklySummary{Empty: "Not enough morning weigh-ins this week yet for a trend comparison."}
-	}
-	summary := WeeklySummary{ThisWeekAvg: fmt.Sprintf("%.1f kg", meanKg(thisWeek))}
-	if len(lastWeek) == 0 {
-		return summary
-	}
-	thisAvg, lastAvg := meanKg(thisWeek), meanKg(lastWeek)
-	summary.HasComparison = true
-	summary.LastWeekAvg = fmt.Sprintf("%.1f kg", lastAvg)
-	summary.Delta = fmt.Sprintf("%+.1f kg", thisAvg-lastAvg)
-	summary.DeltaIsLoss = thisAvg < lastAvg
-	return summary
-}
-
-// meanKg averages gram values and returns kilograms. The sum is taken in
-// integer grams so it is exact however many weigh-ins it covers; only the
-// final division is floating point.
-func meanKg(grams []int64) float64 {
-	var sum int64
-	for _, g := range grams {
-		sum += g
-	}
-	return db.GramsToKg(sum) / float64(len(grams))
-}
 
 func (s *server) handleSummary(w http.ResponseWriter, _ *http.Request) {
 	entries, err := db.ListEntries(s.db)
@@ -70,7 +14,7 @@ func (s *server) handleSummary(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := buildWeeklySummary(entries, time.Now())
+	data := summary.Build(entries, time.Now())
 	if err := tmpl.ExecuteTemplate(w, "summary", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/weight"
 )
 
 func (s *server) handleExport(w http.ResponseWriter, _ *http.Request) {
@@ -37,7 +38,7 @@ func (s *server) handleExport(w http.ResponseWriter, _ *http.Request) {
 	for _, e := range entries {
 		_ = cw.Write([]string{
 			e.RecordedAt.Format(time.RFC3339),
-			formatKgInput(e.WeightG),
+			weight.FormatKgInput(e.WeightG),
 		})
 	}
 	cw.Flush()

@@ -14,7 +14,14 @@ import (
 	"strconv"
 	"time"
 
+	"weight-tracker/internal/chart"
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/goals"
+	"weight-tracker/internal/history"
+	"weight-tracker/internal/markers"
+	"weight-tracker/internal/overnight"
+	"weight-tracker/internal/summary"
+	"weight-tracker/internal/timerange"
 )
 
 //go:embed templates/*.html
@@ -95,12 +102,12 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	goals, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	markers, err := db.ListMarkers(s.db)
+	markerList, err := db.ListMarkers(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,31 +115,31 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	// Matches OvernightRange's DefaultRange below, so the precomputed initial
 	// render agrees with what the picker claims to be showing.
-	overnightWindow := resolveRangeWindow("30", "", "", now)
-	overnightPairs := windowedOvernightPairs(entries, overnightWindow)
+	overnightWindow := timerange.Resolve("30", "", "", now)
+	overnightPairs := overnight.WindowedPairs(entries, overnightWindow)
 	data := struct {
 		NowDate        string
 		NowTime        string
-		Rows           []Row
-		Goals          []GoalRow
-		Markers        []MarkerRow
-		Summary        WeeklySummary
-		ChartRange     TimeRangePickerConfig
-		HistoryRange   TimeRangePickerConfig
-		OvernightRange TimeRangePickerConfig
-		Overnight      OvernightSummary
-		Pairs          []OvernightPair
+		Rows           []history.Row
+		Goals          []goals.Row
+		Markers        []markers.Row
+		Summary        summary.WeeklySummary
+		ChartRange     timerange.PickerConfig
+		HistoryRange   timerange.PickerConfig
+		OvernightRange timerange.PickerConfig
+		Overnight      overnight.Summary
+		Pairs          []overnight.Pair
 	}{
 		NowDate:        now.Format("2006-01-02"),
 		NowTime:        now.Format("15:04"),
-		Rows:           buildRows(entries),
-		Goals:          buildGoalRows(goals, now),
-		Markers:        buildMarkerRows(markers),
-		Summary:        buildWeeklySummary(entries, now),
-		ChartRange:     TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
-		HistoryRange:   TimeRangePickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
-		OvernightRange: TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
-		Overnight:      buildOvernightSummary(overnightPairs),
+		Rows:           history.BuildRows(entries),
+		Goals:          goals.BuildRows(goalList, now),
+		Markers:        markers.BuildRows(markerList),
+		Summary:        summary.Build(entries, now),
+		ChartRange:     timerange.PickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		HistoryRange:   timerange.PickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
+		OvernightRange: timerange.PickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		Overnight:      overnight.BuildSummary(overnightPairs),
 		Pairs:          overnightPairs,
 	}
 	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
@@ -158,17 +165,17 @@ func (s *server) handleChart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	goals, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	markers, err := db.ListMarkers(s.db)
+	markerList, err := db.ListMarkers(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := buildChartData(entries, goals, markers, rangeParam, seriesParam, fromParam, untilParam, time.Now())
+	data := chart.Build(entries, goalList, markerList, rangeParam, seriesParam, fromParam, untilParam, time.Now())
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

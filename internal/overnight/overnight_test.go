@@ -1,20 +1,34 @@
-package main
+package overnight
 
 import (
 	"math"
 	"testing"
+	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/testsupport"
+	"weight-tracker/internal/timerange"
+	"weight-tracker/internal/weight"
 )
 
-func TestBuildOvernightPairs(t *testing.T) {
+func at(t *testing.T, s string) time.Time { return testsupport.At(t, s) }
+
+func entry(id int64, recordedAt time.Time, weightKg float64, override string) db.Entry {
+	return testsupport.Entry(id, recordedAt, weightKg, override)
+}
+
+func goal(id int64, weightKg float64, effectiveFrom string, t *testing.T) db.Goal {
+	return testsupport.Goal(id, weightKg, effectiveFrom, t)
+}
+
+func TestBuildPairs(t *testing.T) {
 	t.Run("a genuine overnight adjacency produces one pair", func(t *testing.T) {
 		entries := []db.Entry{
 			entry(1, at(t, "2026-08-14 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-15 07:00"), 82.5, ""),
 		}
-		chrono, overnightByID, _ := chronologicalWithDeltas(entries)
-		pairs := buildOvernightPairs(chrono, overnightByID)
+		chrono, overnightByID, _ := weight.ChronologicalWithDeltas(entries)
+		pairs := BuildPairs(chrono, overnightByID)
 		if len(pairs) != 1 {
 			t.Fatalf("got %d pairs, want 1", len(pairs))
 		}
@@ -35,16 +49,16 @@ func TestBuildOvernightPairs(t *testing.T) {
 			entry(1, at(t, "2026-08-10 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-14 07:00"), 82.5, ""), // several days later
 		}
-		chrono, overnightByID, _ := chronologicalWithDeltas(entries)
-		if pairs := buildOvernightPairs(chrono, overnightByID); len(pairs) != 0 {
+		chrono, overnightByID, _ := weight.ChronologicalWithDeltas(entries)
+		if pairs := BuildPairs(chrono, overnightByID); len(pairs) != 0 {
 			t.Errorf("got %d pairs, want 0 across a multi-day gap", len(pairs))
 		}
 	})
 
 	t.Run("a lone morning entry with no preceding evening produces no pair", func(t *testing.T) {
 		entries := []db.Entry{entry(1, at(t, "2026-08-15 07:00"), 82.5, "")}
-		chrono, overnightByID, _ := chronologicalWithDeltas(entries)
-		if pairs := buildOvernightPairs(chrono, overnightByID); len(pairs) != 0 {
+		chrono, overnightByID, _ := weight.ChronologicalWithDeltas(entries)
+		if pairs := BuildPairs(chrono, overnightByID); len(pairs) != 0 {
 			t.Errorf("got %d pairs, want 0 with no evening entry at all", len(pairs))
 		}
 	})
@@ -56,8 +70,8 @@ func TestBuildOvernightPairs(t *testing.T) {
 			entry(3, at(t, "2026-08-17 20:00"), 85.0, ""),
 			entry(4, at(t, "2026-08-18 07:00"), 83.9, ""),
 		}
-		chrono, overnightByID, _ := chronologicalWithDeltas(entries)
-		pairs := buildOvernightPairs(chrono, overnightByID)
+		chrono, overnightByID, _ := weight.ChronologicalWithDeltas(entries)
+		pairs := BuildPairs(chrono, overnightByID)
 		if len(pairs) != 2 {
 			t.Fatalf("got %d pairs, want 2", len(pairs))
 		}
@@ -67,22 +81,22 @@ func TestBuildOvernightPairs(t *testing.T) {
 	})
 }
 
-func TestBuildOvernightSummary(t *testing.T) {
+func TestBuildSummary(t *testing.T) {
 	t.Run("no pairs yields an empty-state message", func(t *testing.T) {
-		got := buildOvernightSummary(nil)
+		got := BuildSummary(nil)
 		if got.Empty == "" {
 			t.Error("Empty = \"\", want an explanatory message")
 		}
 	})
 
 	t.Run("aggregates average, last, best-case, and worst-case", func(t *testing.T) {
-		// buildOvernightPairs returns newest-first; construct the fixture the
-		// same way rather than relying on internal ordering assumptions.
-		pairs := []OvernightPair{
+		// BuildPairs returns newest-first; construct the fixture the same
+		// way rather than relying on internal ordering assumptions.
+		pairs := []Pair{
 			{MorningID: 3, DeltaG: -1100, IsLoss: true}, // most recent — smallest loss (best case)
 			{MorningID: 2, DeltaG: -1500, IsLoss: true}, // largest loss (worst case)
 		}
-		got := buildOvernightSummary(pairs)
+		got := BuildSummary(pairs)
 
 		if got.Count != 2 {
 			t.Errorf("Count = %d, want 2", got.Count)
@@ -102,19 +116,53 @@ func TestBuildOvernightSummary(t *testing.T) {
 	})
 
 	t.Run("a gain overnight is not a loss", func(t *testing.T) {
-		got := buildOvernightSummary([]OvernightPair{{MorningID: 1, DeltaG: 200}})
+		got := BuildSummary([]Pair{{MorningID: 1, DeltaG: 200}})
 		if got.AvgIsLoss || got.BestCaseIsLoss || got.WorstCaseIsLoss || got.LastIsLoss {
 			t.Error("a positive delta was classified as a loss")
 		}
 	})
 }
 
-func TestSampleStdDevG(t *testing.T) {
+func TestWindowedPairs(t *testing.T) {
+	entries := []db.Entry{
+		entry(1, at(t, "2026-08-14 20:00"), 84.0, ""), // evening, just before the window below
+		entry(2, at(t, "2026-08-15 07:00"), 82.5, ""), // morning, inside the window
+	}
+
+	t.Run("the morning entry's delta survives even when its evening partner is outside the window", func(t *testing.T) {
+		// Mirrors the History-filter correctness rule this session already
+		// hit once: windowing entries before computing deltas would starve
+		// the adjacency check at the window's edge.
+		window := timerange.Window{From: at(t, "2026-08-15 00:00"), HasFrom: true}
+		pairs := WindowedPairs(entries, window)
+		if len(pairs) != 1 {
+			t.Fatalf("got %d pairs, want 1 (the morning entry's delta, computed against the off-window evening entry)", len(pairs))
+		}
+		if pairs[0].DeltaStr != "-1.5 kg" {
+			t.Errorf("delta = %q, want -1.5 kg", pairs[0].DeltaStr)
+		}
+	})
+
+	t.Run("a window excluding the morning entry too yields nothing", func(t *testing.T) {
+		window := timerange.Window{From: at(t, "2026-08-16 00:00"), HasFrom: true}
+		if pairs := WindowedPairs(entries, window); len(pairs) != 0 {
+			t.Errorf("got %d pairs, want 0", len(pairs))
+		}
+	})
+
+	t.Run("an unbounded window is a pass-through", func(t *testing.T) {
+		if pairs := WindowedPairs(entries, timerange.Window{}); len(pairs) != 1 {
+			t.Errorf("got %d pairs, want 1", len(pairs))
+		}
+	})
+}
+
+func TestSampleStdDev(t *testing.T) {
 	t.Run("fewer than two values has no standard deviation", func(t *testing.T) {
-		if _, ok := sampleStdDevG(nil, 0); ok {
+		if _, ok := sampleStdDev(nil, 0); ok {
 			t.Error("got ok=true for zero values")
 		}
-		if _, ok := sampleStdDevG([]int64{-1500}, -1500); ok {
+		if _, ok := sampleStdDev([]int64{-1500}, -1500); ok {
 			t.Error("got ok=true for a single value")
 		}
 	})
@@ -127,7 +175,7 @@ func TestSampleStdDevG(t *testing.T) {
 		// check itself.
 		deltas := []int64{-1000, -1500, -1300}
 		mean := -1266.6666666666667
-		got, ok := sampleStdDevG(deltas, mean)
+		got, ok := sampleStdDev(deltas, mean)
 		if !ok {
 			t.Fatal("got ok=false, want true for 3 values")
 		}
@@ -137,9 +185,9 @@ func TestSampleStdDevG(t *testing.T) {
 	})
 }
 
-func TestBuildOvernightWindowChart(t *testing.T) {
+func TestBuildWindowChart(t *testing.T) {
 	t.Run("no entries at all yields the empty state", func(t *testing.T) {
-		got := buildOvernightWindowChart(nil, nil, at(t, "2026-08-20 12:00"))
+		got := BuildWindowChart(nil, nil, at(t, "2026-08-20 12:00"))
 		if got.HasData {
 			t.Error("HasData = true, want false with no entries")
 		}
@@ -153,7 +201,7 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
 		}
-		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
+		got := BuildWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
 		if !got.HasData {
 			t.Fatal("HasData = false, want true")
 		}
@@ -185,7 +233,7 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(6, at(t, "2026-06-02 07:00"), 81.0, ""),
 		}
 		now := at(t, "2026-08-20 12:00")
-		got := buildOvernightWindowChart(entries, nil, now)
+		got := BuildWindowChart(entries, nil, now)
 		counts := map[string]int{}
 		for _, p := range got.Points {
 			counts[p.Label] = p.Count
@@ -204,8 +252,8 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(5, at(t, "2026-06-01 20:00"), 84.0, ""), // +0.5kg (a gain)
 			entry(6, at(t, "2026-06-02 07:00"), 84.5, ""),
 		}
-		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
-		var ninety OvernightWindowPoint
+		got := BuildWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
+		var ninety WindowPoint
 		for _, p := range got.Points {
 			if p.Label == "90d" {
 				ninety = p
@@ -221,7 +269,7 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
 		}
-		got := buildOvernightWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
+		got := BuildWindowChart(entries, nil, at(t, "2026-08-20 12:00"))
 		if got.HasGoal {
 			t.Error("HasGoal = true, want false with no goals set")
 		}
@@ -232,47 +280,13 @@ func TestBuildOvernightWindowChart(t *testing.T) {
 			entry(1, at(t, "2026-08-19 20:00"), 84.0, ""),
 			entry(2, at(t, "2026-08-20 07:00"), 82.5, ""),
 		}
-		goals := []db.Goal{goal(1, 80, "2026-01-01", t)}
-		got := buildOvernightWindowChart(entries, goals, at(t, "2026-08-20 12:00"))
+		goalList := []db.Goal{goal(1, 80, "2026-01-01", t)}
+		got := BuildWindowChart(entries, goalList, at(t, "2026-08-20 12:00"))
 		if !got.HasGoal {
 			t.Fatal("HasGoal = false, want true with an active goal")
 		}
 		if got.GoalKg != 80 {
 			t.Errorf("GoalKg = %v, want 80", got.GoalKg)
-		}
-	})
-}
-
-func TestWindowedOvernightPairs(t *testing.T) {
-	entries := []db.Entry{
-		entry(1, at(t, "2026-08-14 20:00"), 84.0, ""), // evening, just before the window below
-		entry(2, at(t, "2026-08-15 07:00"), 82.5, ""), // morning, inside the window
-	}
-
-	t.Run("the morning entry's delta survives even when its evening partner is outside the window", func(t *testing.T) {
-		// Mirrors the History-filter correctness rule this session already
-		// hit once: windowing entries before computing deltas would starve
-		// the adjacency check at the window's edge.
-		window := rangeWindow{from: at(t, "2026-08-15 00:00"), hasFrom: true}
-		pairs := windowedOvernightPairs(entries, window)
-		if len(pairs) != 1 {
-			t.Fatalf("got %d pairs, want 1 (the morning entry's delta, computed against the off-window evening entry)", len(pairs))
-		}
-		if pairs[0].DeltaStr != "-1.5 kg" {
-			t.Errorf("delta = %q, want -1.5 kg", pairs[0].DeltaStr)
-		}
-	})
-
-	t.Run("a window excluding the morning entry too yields nothing", func(t *testing.T) {
-		window := rangeWindow{from: at(t, "2026-08-16 00:00"), hasFrom: true}
-		if pairs := windowedOvernightPairs(entries, window); len(pairs) != 0 {
-			t.Errorf("got %d pairs, want 0", len(pairs))
-		}
-	})
-
-	t.Run("an unbounded window is a pass-through", func(t *testing.T) {
-		if pairs := windowedOvernightPairs(entries, rangeWindow{}); len(pairs) != 1 {
-			t.Errorf("got %d pairs, want 1", len(pairs))
 		}
 	})
 }

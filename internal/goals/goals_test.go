@@ -1,17 +1,20 @@
-package main
+package goals
 
 import (
 	"testing"
+	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/testsupport"
 )
 
+func at(t *testing.T, s string) time.Time { return testsupport.At(t, s) }
+
 func goal(id int64, weightKg float64, effectiveFrom string, t *testing.T) db.Goal {
-	t.Helper()
-	return db.Goal{ID: id, WeightG: db.KgToGrams(weightKg), EffectiveFrom: at(t, effectiveFrom+" 00:00")}
+	return testsupport.Goal(id, weightKg, effectiveFrom, t)
 }
 
-func TestBuildGoalRows(t *testing.T) {
+func TestBuildRows(t *testing.T) {
 	now := at(t, "2026-08-16 12:00")
 	// Newest-first, as db.ListGoals returns them.
 	goals := []db.Goal{
@@ -19,7 +22,7 @@ func TestBuildGoalRows(t *testing.T) {
 		goal(2, 78, "2026-08-01", t), // current
 		goal(1, 80, "2026-01-01", t), // superseded
 	}
-	rows := buildGoalRows(goals, now)
+	rows := BuildRows(goals, now)
 
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3", len(rows))
@@ -44,14 +47,14 @@ func TestBuildGoalRows(t *testing.T) {
 	}
 }
 
-func TestBuildGoalRowsMarksAtMostOneCurrent(t *testing.T) {
+func TestBuildRowsMarksAtMostOneCurrent(t *testing.T) {
 	now := at(t, "2026-08-16 12:00")
 	goals := []db.Goal{
 		goal(2, 78, "2026-08-01", t),
 		goal(1, 80, "2026-07-01", t),
 	}
 	current := 0
-	for _, row := range buildGoalRows(goals, now) {
+	for _, row := range BuildRows(goals, now) {
 		if row.Current {
 			current++
 		}
@@ -61,15 +64,15 @@ func TestBuildGoalRowsMarksAtMostOneCurrent(t *testing.T) {
 	}
 }
 
-func TestBuildGoalRowsWithOnlyFutureGoals(t *testing.T) {
+func TestBuildRowsWithOnlyFutureGoals(t *testing.T) {
 	now := at(t, "2026-08-16 12:00")
-	rows := buildGoalRows([]db.Goal{goal(1, 76, "2026-12-01", t)}, now)
+	rows := BuildRows([]db.Goal{goal(1, 76, "2026-12-01", t)}, now)
 	if rows[0].Current {
 		t.Error("a goal that has not taken effect yet is marked current")
 	}
 }
 
-func TestBuildGoalSegments(t *testing.T) {
+func TestBuildSegments(t *testing.T) {
 	t.Run("each goal runs until the next one starts", func(t *testing.T) {
 		// Deliberately unsorted input.
 		goals := []db.Goal{
@@ -77,7 +80,7 @@ func TestBuildGoalSegments(t *testing.T) {
 			goal(1, 80, "2026-01-01", t),
 			goal(3, 76, "2026-09-01", t),
 		}
-		segs := buildGoalSegments(goals)
+		segs := BuildSegments(goals)
 		if len(segs) != 3 {
 			t.Fatalf("got %d segments, want 3", len(segs))
 		}
@@ -93,28 +96,28 @@ func TestBuildGoalSegments(t *testing.T) {
 	})
 
 	t.Run("no goals yields no segments", func(t *testing.T) {
-		if segs := buildGoalSegments(nil); segs != nil {
+		if segs := BuildSegments(nil); segs != nil {
 			t.Errorf("got %v, want nil", segs)
 		}
 	})
 
 	t.Run("a single goal is one open-ended segment", func(t *testing.T) {
-		segs := buildGoalSegments([]db.Goal{goal(1, 78, "2026-01-01", t)})
+		segs := BuildSegments([]db.Goal{goal(1, 78, "2026-01-01", t)})
 		if len(segs) != 1 || !segs[0].Until.IsZero() {
 			t.Errorf("got %+v, want one open-ended segment", segs)
 		}
 	})
 }
 
-func TestClipGoalSegments(t *testing.T) {
-	segs := buildGoalSegments([]db.Goal{
+func TestClipSegments(t *testing.T) {
+	segs := BuildSegments([]db.Goal{
 		goal(1, 80, "2026-01-01", t),
 		goal(2, 78, "2026-06-01", t),
 	})
 
 	t.Run("closes off the open-ended segment at the range end", func(t *testing.T) {
 		from, until := at(t, "2026-05-01 00:00"), at(t, "2026-08-16 00:00")
-		got := clipGoalSegments(segs, from, until)
+		got := ClipSegments(segs, from, until)
 		if len(got) != 2 {
 			t.Fatalf("got %d segments, want 2", len(got))
 		}
@@ -128,7 +131,7 @@ func TestClipGoalSegments(t *testing.T) {
 
 	t.Run("drops segments with no overlap", func(t *testing.T) {
 		from, until := at(t, "2026-07-01 00:00"), at(t, "2026-08-16 00:00")
-		got := clipGoalSegments(segs, from, until)
+		got := ClipSegments(segs, from, until)
 		if len(got) != 1 {
 			t.Fatalf("got %d segments, want only the 78 kg one", len(got))
 		}
@@ -138,7 +141,7 @@ func TestClipGoalSegments(t *testing.T) {
 	})
 
 	t.Run("a range entirely before every goal keeps nothing", func(t *testing.T) {
-		got := clipGoalSegments(segs, at(t, "2025-01-01 00:00"), at(t, "2025-06-01 00:00"))
+		got := ClipSegments(segs, at(t, "2025-01-01 00:00"), at(t, "2025-06-01 00:00"))
 		if len(got) != 0 {
 			t.Errorf("got %+v, want nothing", got)
 		}
@@ -146,7 +149,7 @@ func TestClipGoalSegments(t *testing.T) {
 
 	t.Run("a zero-width overlap is dropped rather than emitted", func(t *testing.T) {
 		// The range ends exactly where the first segment starts.
-		got := clipGoalSegments(segs, at(t, "2025-06-01 00:00"), at(t, "2026-01-01 00:00"))
+		got := ClipSegments(segs, at(t, "2025-06-01 00:00"), at(t, "2026-01-01 00:00"))
 		for _, s := range got {
 			if !s.From.Before(s.Until) {
 				t.Errorf("emitted a zero-width segment %+v", s)
