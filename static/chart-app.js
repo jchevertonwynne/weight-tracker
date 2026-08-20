@@ -3,6 +3,7 @@
 	if (!canvas) return;
 	const emptyEl = document.getElementById('chart-empty');
 	const markerNoteEl = document.getElementById('marker-note');
+	const markerLegendEl = document.getElementById('marker-legend');
 	const form = document.getElementById('chart-controls');
 	let chart = null;
 
@@ -261,14 +262,6 @@ const tickScales = [
 // What fits across a phone without the labels colliding, before the two
 // pinned end dates are added.
 const maxTimeTicks = 5;
-// A generated tick closer to a pinned end than this fraction of the span
-// is dropped, because the two labels would overlap. A fraction of the
-// span, not of the tick step: collision is about pixels, and a step-
-// relative rule throws away a perfectly well-spaced tick on long ranges
-// where one step is months wide. Roughly the width of a date label
-// against a phone-width axis.
-const tickEndExclusion = 0.12;
-
 function startOfUnit(ms, unit) {
 	const d = new Date(ms);
 	d.setHours(0, 0, 0, 0);
@@ -323,10 +316,17 @@ function calendarTicks(axis) {
 		}
 	}
 
-	const exclusion = (max - min) * tickEndExclusion;
-	const values = chosen.filter((v) => v - min > exclusion && max - v > exclusion);
-	// The ends are always shown, so the axis states the range it covers.
-	axis.ticks = [min, ...values, max].map((value) => ({ value }));
+	// Only the calendar boundaries get labelled — the range's own start and
+	// end are not pinned. This is how Grafana's time axis behaves, and the
+	// reason is that pinning them fights the boundaries: an end sitting a few
+	// days from the first of the month means one of the two has to go, and
+	// dropping the boundary is what made a 90-day view skip 1 Jun. Leaving
+	// the ends off keeps every label on a date worth reading and evenly
+	// spaced; the range itself is already named on the picker above.
+	//
+	// The exception is a span too short to contain any boundary at all, where
+	// the ends are better than an axis with no labels.
+	axis.ticks = (chosen.length ? chosen : [min, max]).map((value) => ({ value }));
 }
 
 	function buildConfig(data) {
@@ -511,12 +511,35 @@ function calendarTicks(axis) {
 		};
 	}
 
+	// renderMarkerLegend lists every marker in view, in date order, each dot
+	// the colour of its own line on the chart. The inline labels the chart
+	// draws are dropped whenever dates crowd together, and on a touch screen
+	// reading one otherwise means tapping its line — this is always there and
+	// always complete.
+	function renderMarkerLegend(markers) {
+		if (!markerLegendEl) return;
+		markerLegendEl.replaceChildren();
+		const list = (markers || []).slice().sort((a, b) => a.x - b.x);
+		markerLegendEl.hidden = list.length === 0;
+		list.forEach((m) => {
+			const item = document.createElement('li');
+			const dot = document.createElement('span');
+			dot.className = 'marker-legend-dot';
+			dot.style.background = colorForMarker(m.id);
+			dot.setAttribute('aria-hidden', 'true');
+			item.appendChild(dot);
+			item.appendChild(document.createTextNode(`${m.date}: ${m.note}`));
+			markerLegendEl.appendChild(item);
+		});
+	}
+
 	function renderChart(data) {
 		if (chart) {
 			chart.destroy();
 			chart = null;
 		}
 		if (markerNoteEl) markerNoteEl.hidden = true;
+		renderMarkerLegend(data.hasData ? data.markers : []);
 		if (!data.hasData) {
 			canvas.hidden = true;
 			if (emptyEl) {

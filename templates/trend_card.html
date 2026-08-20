@@ -31,5 +31,9 @@
 	<canvas id="weight-chart"></canvas>
 	<p class="empty" id="chart-empty" hidden></p>
 	<p class="empty" id="marker-note" hidden></p>
+	{{/* Populated by chart-app.js from the same markers the chart draws,
+	     so it always lists exactly what is on the plot. The inline labels
+	     get dropped when dates crowd together; this does not. */}}
+	<ul class="marker-legend" id="marker-legend" aria-label="Markers on this chart" hidden></ul>
 </section>
 {{end}}

@@ -631,3 +631,36 @@ select:focus {
 	position: absolute;
 	inset: 0;
 }
+
+/* The always-visible list of markers under the trend chart. The chart draws
+   each marker's name inline too, but drops labels that would collide when
+   dates crowd; this stays complete, and on a phone it is also the only way
+   to read a marker without tapping its line. */
+.marker-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.9rem;
+	padding: 0;
+	list-style: none;
+	font-size: 0.8rem;
+	color: var(--on-surface-muted);
+}
+
+.marker-legend li {
+	display: flex;
+	align-items: center;
+	gap: 0.35rem;
+}
+
+/* An explicit display beats the [hidden] attribute's own display: none,
+   which is why .tab-panel[hidden] and .time-range-popover[hidden] exist too. */
+.marker-legend[hidden] {
+	display: none;
+}
+
+.marker-legend-dot {
+	width: 0.5rem;
+	height: 0.5rem;
+	border-radius: 50%;
+	flex: none;
+}
