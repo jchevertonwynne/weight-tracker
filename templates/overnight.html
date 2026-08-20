@@ -1,0 +1,111 @@
+{{define "overnight-tab"}}
+<div class="tab-panel" id="tab-overnight" hidden>
+	<section class="card">
+		<h2>Filter</h2>
+		<form id="overnight-filter" class="chart-controls"
+			hx-get="/overnight"
+			hx-target="#overnight-content"
+			hx-swap="outerHTML"
+			hx-trigger="change, entries-changed from:body">
+			<div class="chart-controls-row">
+				{{template "time-range-picker" .OvernightRange}}
+			</div>
+		</form>
+	</section>
+	{{template "overnight-content" .}}
+</div>
+{{end}}
+
+{{/* overnight-content is the htmx-swappable fragment: stats, the weigh-in
+     calculator, and the pairs table, all scoped to whatever range the
+     filter form above currently has selected. Field names (Overnight/Pairs)
+     match handleIndex's full data struct — see overnight.go. */}}
+{{define "overnight-content"}}
+<div id="overnight-content">
+	<section class="card">
+		<h2>Overnight</h2>
+		{{if .Overnight.Empty}}
+			<p class="empty">{{.Overnight.Empty}}</p>
+		{{else}}
+			<div class="summary-stats"
+				data-role="overnight-stats"
+				data-avg-g="{{.Overnight.AvgDeltaG}}"
+				data-best-case-g="{{.Overnight.BestCaseG}}">
+				<div class="stat-tile">
+					<span class="stat-label">Nights logged</span>
+					<span class="stat-value">{{.Overnight.Count}}</span>
+				</div>
+				<div class="stat-tile">
+					<span class="stat-label">Last night</span>
+					<span class="chip {{if .Overnight.LastIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Overnight.LastStr}}</span>
+				</div>
+				<div class="stat-tile">
+					<span class="stat-label">Typical (average)</span>
+					<span class="chip {{if .Overnight.AvgIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Overnight.AvgStr}}</span>
+				</div>
+				<div class="stat-tile">
+					<span class="stat-label">Safe (smallest loss)</span>
+					<span class="chip {{if .Overnight.BestCaseIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Overnight.BestCaseStr}}</span>
+				</div>
+				<div class="stat-tile">
+					<span class="stat-label">Largest loss</span>
+					<span class="chip {{if .Overnight.WorstCaseIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Overnight.WorstCaseStr}}</span>
+				</div>
+			</div>
+		{{end}}
+	</section>
+
+	<section class="card">
+		<h2>Weigh-in calculator</h2>
+		<p class="empty">
+			Enter the weight you need to hit at tomorrow's morning weigh-in —
+			this shows the most you can weigh tonight and still make it,
+			based on the overnight change above.
+		</p>
+		<div class="entry-form">
+			<label class="field">
+				<span>Target morning weight (kg)</span>
+				<input type="number" step="0.1" min="0" id="overnight-calc-target"
+					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5"
+					{{if .Overnight.Empty}}disabled{{end}}>
+			</label>
+		</div>
+		<div class="summary-stats">
+			<div class="stat-tile">
+				<span class="stat-label">Typical bedtime ceiling</span>
+				<span class="stat-value" id="overnight-calc-typical">–</span>
+			</div>
+			<div class="stat-tile">
+				<span class="stat-label">Safe bedtime ceiling</span>
+				<span class="stat-value" id="overnight-calc-safe">–</span>
+			</div>
+		</div>
+	</section>
+
+	<section class="card">
+		<h2>Overnight history</h2>
+		{{if not .Pairs}}
+			<p class="empty">No overnight pairs in this range yet.</p>
+		{{else}}
+			<table class="entry-table">
+				<thead>
+					<tr>
+						<th scope="col">Evening</th>
+						<th scope="col">Morning</th>
+						<th scope="col">Change</th>
+					</tr>
+				</thead>
+				<tbody>
+					{{range .Pairs}}
+						<tr>
+							<td class="entry-date">{{.EveningLabel}}<br>{{.EveningWeightStr}} kg</td>
+							<td class="entry-date">{{.MorningLabel}}<br>{{.MorningWeightStr}} kg</td>
+							<td><span class="chip {{if .IsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.DeltaStr}}</span></td>
+						</tr>
+					{{end}}
+				</tbody>
+			</table>
+		{{end}}
+	</section>
+</div>
+{{end}}

@@ -37,6 +37,8 @@
 			{{template "entries-list" .}}
 		</div>
 
+		{{template "overnight-tab" .}}
+
 		{{template "settings-tab" .}}
 	</main>
 
@@ -50,6 +52,9 @@
 		</button>
 		<button type="button" class="tab-btn" data-tab="history">
 			<span class="tab-icon">📋</span><span>History</span>
+		</button>
+		<button type="button" class="tab-btn" data-tab="overnight">
+			<span class="tab-icon">⚖️</span><span>Overnight</span>
 		</button>
 		<button type="button" class="tab-btn" data-tab="settings">
 			<span class="tab-icon">⚙</span><span>Settings</span>

@@ -48,6 +48,7 @@ func main() {
 	mux.HandleFunc("GET /chart", s.handleChart)
 	mux.HandleFunc("GET /summary", s.handleSummary)
 	mux.HandleFunc("GET /sw.js", s.handleServiceWorker)
+	mux.HandleFunc("GET /overnight", s.handleOvernightTab)
 	mux.HandleFunc("GET /entries", s.handleEntriesList)
 	mux.HandleFunc("POST /entries", s.handleCreate)
 	mux.HandleFunc("GET /entries/{id}", s.handleCancelEdit)
@@ -104,24 +105,34 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// Matches OvernightRange's DefaultRange below, so the precomputed initial
+	// render agrees with what the picker claims to be showing.
+	overnightWindow := resolveRangeWindow("30", "", "", now)
+	overnightPairs := windowedOvernightPairs(entries, overnightWindow)
 	data := struct {
-		NowDate      string
-		NowTime      string
-		Rows         []Row
-		Goals        []GoalRow
-		Markers      []MarkerRow
-		Summary      WeeklySummary
-		ChartRange   TimeRangePickerConfig
-		HistoryRange TimeRangePickerConfig
+		NowDate        string
+		NowTime        string
+		Rows           []Row
+		Goals          []GoalRow
+		Markers        []MarkerRow
+		Summary        WeeklySummary
+		ChartRange     TimeRangePickerConfig
+		HistoryRange   TimeRangePickerConfig
+		OvernightRange TimeRangePickerConfig
+		Overnight      OvernightSummary
+		Pairs          []OvernightPair
 	}{
-		NowDate:      now.Format("2006-01-02"),
-		NowTime:      now.Format("15:04"),
-		Rows:         buildRows(entries),
-		Goals:        buildGoalRows(goals, now),
-		Markers:      buildMarkerRows(markers),
-		Summary:      buildWeeklySummary(entries, now),
-		ChartRange:   TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
-		HistoryRange: TimeRangePickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
+		NowDate:        now.Format("2006-01-02"),
+		NowTime:        now.Format("15:04"),
+		Rows:           buildRows(entries),
+		Goals:          buildGoalRows(goals, now),
+		Markers:        buildMarkerRows(markers),
+		Summary:        buildWeeklySummary(entries, now),
+		ChartRange:     TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		HistoryRange:   TimeRangePickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
+		OvernightRange: TimeRangePickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		Overnight:      buildOvernightSummary(overnightPairs),
+		Pairs:          overnightPairs,
 	}
 	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
