@@ -259,8 +259,7 @@ const tickScales = [
 	{ unit: 'month', steps: [1, 2, 3, 6] },
 	{ unit: 'year', steps: [1, 2, 5] },
 ];
-// What fits across a phone without the labels colliding, before the two
-// pinned end dates are added.
+// What fits across a phone without the labels colliding.
 const maxTimeTicks = 5;
 function startOfUnit(ms, unit) {
 	const d = new Date(ms);
@@ -301,20 +300,45 @@ function boundariesBetween(min, max, unit, step) {
 	return out;
 }
 
+// chooseTickScale returns the finest unit/step whose boundaries fit within
+// maxTimeTicks, so the axis carries as much detail as it has room for.
+function chooseTickScale(min, max) {
+	for (const scale of tickScales) {
+		for (const step of scale.steps) {
+			if (boundariesBetween(min, max, scale.unit, step).length <= maxTimeTicks) {
+				return { unit: scale.unit, step };
+			}
+		}
+	}
+	return { unit: 'year', step: 5 };
+}
+
+// axisMinFor nudges the left edge back to a calendar boundary when the
+// first reading falls on the same day as one.
+//
+// Without it, a boundary a few hours before the first reading is simply
+// outside the axis and never drawn: readings start 1 Jan at 11:02, the
+// 1 Jan boundary is at 00:00, and the all-time axis lost its 1 Jan label
+// despite the data starting precisely there.
+//
+// Bounded to the same calendar day, so this can only ever add a few hours
+// of empty space, and only when the data genuinely reaches that boundary.
+// A range starting on 3 Jan gains nothing, which is correct — 1 Jan is
+// outside it.
+function axisMinFor(min, max) {
+	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return min;
+	const { unit } = chooseTickScale(min, max);
+	const boundary = startOfUnit(min, unit).getTime();
+	const sameDay = new Date(boundary).toDateString() === new Date(min).toDateString();
+	return boundary < min && sameDay ? boundary : min;
+}
+
 function calendarTicks(axis) {
 	const { min, max } = axis;
 	if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
 
-	let chosen = [];
-	outer: for (const scale of tickScales) {
-		for (const step of scale.steps) {
-			const values = boundariesBetween(min, max, scale.unit, step);
-			if (values.length <= maxTimeTicks) {
-				chosen = values;
-				break outer;
-			}
-		}
-	}
+	const { unit, step } = chooseTickScale(min, max);
+	const chosen = boundariesBetween(min, max, unit, step);
 
 	// Only the calendar boundaries get labelled — the range's own start and
 	// end are not pinned. This is how Grafana's time axis behaves, and the
@@ -471,7 +495,9 @@ function calendarTicks(axis) {
 				scales: {
 					x: {
 						type: 'linear',
-						min: data.xMin,
+						// Extended to a calendar boundary when the first
+						// reading sits on one; see axisMinFor.
+						min: axisMinFor(data.xMin, data.xMax),
 						max: data.xMax,
 						grid: { color: cssVar('--chart-grid') },
 						// See calendarTicks: ticks land on calendar
