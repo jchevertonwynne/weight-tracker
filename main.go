@@ -49,6 +49,7 @@ func main() {
 	mux.HandleFunc("GET /summary", s.handleSummary)
 	mux.HandleFunc("GET /sw.js", s.handleServiceWorker)
 	mux.HandleFunc("GET /overnight", s.handleOvernightTab)
+	mux.HandleFunc("GET /overnight/windows", s.handleOvernightWindows)
 	mux.HandleFunc("GET /entries", s.handleEntriesList)
 	mux.HandleFunc("POST /entries", s.handleCreate)
 	mux.HandleFunc("GET /entries/{id}", s.handleCancelEdit)

@@ -496,3 +496,127 @@
 
 	refreshChart();
 })();
+
+// Overnight tab's "Range by timescale" chart: one floating bar per fixed
+// window (7d/30d/90d) spanning mean ± 1 sample standard deviation, with the
+// mean itself marked as a point. Unlike the main chart above, this canvas
+// lives inside the htmx-swappable #overnight-content fragment — the filter
+// form and entries-changed both replace it wholesale — so the canvas is
+// looked up fresh on every refresh rather than captured once at load, and
+// any previous Chart instance (bound to whatever canvas element used to be
+// there) is torn down first.
+(function () {
+	if (typeof Chart === 'undefined') return;
+
+	function cssVar(name) {
+		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+	}
+
+	function colorFor(meanKg) {
+		return meanKg < 0 ? cssVar('--loss') : cssVar('--gain');
+	}
+
+	let chart = null;
+
+	function render(data) {
+		const canvas = document.getElementById('overnight-window-chart');
+		if (!canvas) return;
+		const emptyEl = document.getElementById('overnight-window-empty');
+
+		if (chart) {
+			chart.destroy();
+			chart = null;
+		}
+		if (!data.hasData) {
+			canvas.hidden = true;
+			if (emptyEl) {
+				emptyEl.hidden = false;
+				emptyEl.textContent = data.empty;
+			}
+			return;
+		}
+		canvas.hidden = false;
+		if (emptyEl) emptyEl.hidden = true;
+
+		const labels = data.points.map((p) => p.label);
+		const ranges = data.points.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
+		const means = data.points.map((p) => p.meanKg);
+		const colors = data.points.map((p) => colorFor(p.meanKg));
+
+		try {
+			chart = new Chart(canvas, {
+				data: {
+					labels,
+					datasets: [
+						{
+							type: 'bar',
+							label: 'Range (±1 SD)',
+							data: ranges,
+							backgroundColor: colors,
+							borderRadius: 4,
+							barThickness: 40,
+						},
+						{
+							type: 'line',
+							label: 'Mean',
+							data: means,
+							showLine: false,
+							pointStyle: 'rectRot',
+							pointRadius: 7,
+							pointBackgroundColor: cssVar('--on-surface'),
+						},
+					],
+				},
+				options: {
+					responsive: true,
+					scales: {
+						x: {
+							grid: { color: cssVar('--chart-grid') },
+							ticks: { color: cssVar('--on-surface-muted') },
+						},
+						y: {
+							grid: { color: cssVar('--chart-grid') },
+							ticks: {
+								color: cssVar('--on-surface-muted'),
+								callback: (value) => value.toFixed(1) + ' kg',
+							},
+						},
+					},
+					plugins: {
+						legend: { display: false },
+						tooltip: {
+							callbacks: {
+								title: (items) => data.points[items[0].dataIndex].label,
+								label: (item) => {
+									const p = data.points[item.dataIndex];
+									if (item.dataset.type === 'line') return 'Mean: ' + p.meanLabel;
+									return p.hasRange
+										? `Range: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg (${p.count} nights)`
+										: `Only ${p.count} night logged — not enough for a range yet`;
+								},
+							},
+						},
+					},
+				},
+			});
+		} catch (err) {
+			console.error('overnight window chart build failed', err);
+		}
+	}
+
+	function refresh() {
+		if (!document.getElementById('overnight-window-chart')) return;
+		fetch('/overnight/windows')
+			.then((res) => {
+				if (!res.ok) throw new Error('server returned ' + res.status);
+				return res.json();
+			})
+			.then(render)
+			.catch((err) => console.error('overnight window chart refresh failed', err));
+	}
+
+	document.body.addEventListener('htmx:afterSwap', refresh);
+	document.body.addEventListener('entries-changed', refresh);
+	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
+	refresh();
+})();

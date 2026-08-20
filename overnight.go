@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"math"
 	"net/http"
+	"strconv"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -162,6 +165,110 @@ func (s *server) handleOvernightTab(w http.ResponseWriter, r *http.Request) {
 		Pairs:     pairs,
 	}
 	if err := tmpl.ExecuteTemplate(w, "overnight-content", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// overnightWindowSpans are the fixed trailing windows compared side by side
+// in the "Range by timescale" chart — unlike the rest of the Overnight tab,
+// this view isn't affected by the shared time-range-picker: seeing 7d/30d/90d
+// side by side is the point, so it always computes all three regardless of
+// whatever range the filter above is set to.
+var overnightWindowSpans = []struct {
+	Label string
+	Days  int
+}{
+	{"7d", 7},
+	{"30d", 30},
+	{"90d", 90},
+}
+
+// OvernightWindowPoint is one window's bar in the "Range by timescale"
+// chart: the mean overnight delta plus a ±1 sample-standard-deviation band
+// around it. HasRange is false below two pairs, since a standard deviation
+// needs at least two samples to mean anything — the bar then collapses to a
+// single point at the mean rather than showing a fabricated zero-width band.
+type OvernightWindowPoint struct {
+	Label     string  `json:"label"`
+	Count     int     `json:"count"`
+	HasRange  bool    `json:"hasRange"`
+	MeanKg    float64 `json:"meanKg"`
+	MeanLabel string  `json:"meanLabel"`
+	LowKg     float64 `json:"lowKg"`
+	HighKg    float64 `json:"highKg"`
+}
+
+type OvernightWindowChart struct {
+	HasData bool                   `json:"hasData"`
+	Empty   string                 `json:"empty,omitempty"`
+	Points  []OvernightWindowPoint `json:"points,omitempty"`
+}
+
+// sampleStdDevG computes the sample standard deviation (n-1 denominator, the
+// correct form for a sample rather than a full population) of deltas around
+// meanG. ok is false below two values, matching HasRange above.
+func sampleStdDevG(deltas []int64, meanG float64) (stddev float64, ok bool) {
+	if len(deltas) < 2 {
+		return 0, false
+	}
+	var sumSq float64
+	for _, d := range deltas {
+		diff := float64(d) - meanG
+		sumSq += diff * diff
+	}
+	return math.Sqrt(sumSq / float64(len(deltas)-1)), true
+}
+
+// buildOvernightWindowChart computes the fixed-window comparison over the
+// full entry set — windowedOvernightPairs already applies the same
+// full-set-then-filter rule this file's other functions depend on.
+func buildOvernightWindowChart(entries []db.Entry, now time.Time) OvernightWindowChart {
+	var points []OvernightWindowPoint
+	anyData := false
+	for _, span := range overnightWindowSpans {
+		window := resolveRangeWindow(strconv.Itoa(span.Days), "", "", now)
+		pairs := windowedOvernightPairs(entries, window)
+
+		point := OvernightWindowPoint{Label: span.Label, Count: len(pairs)}
+		if len(pairs) > 0 {
+			anyData = true
+			deltas := make([]int64, len(pairs))
+			var sum int64
+			for i, p := range pairs {
+				deltas[i] = p.DeltaG
+				sum += p.DeltaG
+			}
+			meanG := sum / int64(len(pairs))
+			point.MeanKg = db.GramsToKg(meanG)
+			point.MeanLabel = formatKgDelta(meanG)
+			if stddev, ok := sampleStdDevG(deltas, float64(meanG)); ok {
+				point.HasRange = true
+				point.LowKg = db.GramsToKg(meanG - int64(math.Round(stddev)))
+				point.HighKg = db.GramsToKg(meanG + int64(math.Round(stddev)))
+			} else {
+				point.LowKg, point.HighKg = point.MeanKg, point.MeanKg
+			}
+		}
+		points = append(points, point)
+	}
+
+	if !anyData {
+		return OvernightWindowChart{Empty: "Not enough data yet — log some overnight pairs to see how the range compares across timescales."}
+	}
+	return OvernightWindowChart{HasData: true, Points: points}
+}
+
+// handleOvernightWindows returns the "Range by timescale" chart data as
+// JSON, mirroring handleChart's split: no server-side pixel math, the
+// client-side Chart.js instance handles that.
+func (s *server) handleOvernightWindows(w http.ResponseWriter, r *http.Request) {
+	entries, err := db.ListEntries(s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(buildOvernightWindowChart(entries, time.Now())); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
