@@ -1,17 +1,16 @@
-package main
+package handlers
 
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/markers"
 )
 
-// renderMarkersList re-renders the markers-list card and fires
+// RenderMarkersList re-renders the markers-list card and fires
 // markers-changed so the chart controls refresh themselves too.
-func (s *server) renderMarkersList(w http.ResponseWriter) {
+func (s *Server) RenderMarkersList(w http.ResponseWriter) {
 	markerList, err := db.ListMarkers(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -19,12 +18,12 @@ func (s *server) renderMarkersList(w http.ResponseWriter) {
 	}
 	w.Header().Set("HX-Trigger", "markers-changed")
 	data := struct{ Markers []markers.Row }{Markers: markers.BuildRows(markerList)}
-	if err := tmpl.ExecuteTemplate(w, "markers-list", data); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "markers-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleMarkerCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleMarkerCreate(w http.ResponseWriter, r *http.Request) {
 	date, err := parseDateField(r, "date")
 	if err != nil {
 		http.Error(w, "invalid date", http.StatusBadRequest)
@@ -35,14 +34,14 @@ func (s *server) handleMarkerCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "note is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateMarker(s.db, date, note, time.Now()); err != nil {
+	if _, err := db.CreateMarker(s.db, date, note, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderMarkersList(w)
+	s.RenderMarkersList(w)
 }
 
-func (s *server) handleMarkerEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleMarkerEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -54,12 +53,12 @@ func (s *server) handleMarkerEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := markers.BuildRows([]db.Marker{marker})
-	if err := tmpl.ExecuteTemplate(w, "marker-row-edit", rows[0]); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "marker-row-edit", rows[0]); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -72,7 +71,7 @@ func (s *server) handleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	for _, row := range markers.BuildRows(markerList) {
 		if row.ID == id {
-			if err := tmpl.ExecuteTemplate(w, "marker-row", row); err != nil {
+			if err := s.tmpl.ExecuteTemplate(w, "marker-row", row); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -81,7 +80,7 @@ func (s *server) handleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) 
 	http.NotFound(w, r)
 }
 
-func (s *server) handleMarkerUpdate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleMarkerUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -101,10 +100,10 @@ func (s *server) handleMarkerUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderMarkersList(w)
+	s.RenderMarkersList(w)
 }
 
-func (s *server) handleMarkerDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleMarkerDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -114,5 +113,5 @@ func (s *server) handleMarkerDelete(w http.ResponseWriter, r *http.Request) {
 		writeDeleteError(w, err)
 		return
 	}
-	s.renderMarkersList(w)
+	s.RenderMarkersList(w)
 }

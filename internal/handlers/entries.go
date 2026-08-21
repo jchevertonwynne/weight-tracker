@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"net/http"
@@ -15,10 +15,10 @@ func parseRecordedAt(r *http.Request) (time.Time, error) {
 	return parseDateTimeFields(r, "recorded_at")
 }
 
-// renderEntriesList re-renders the history list after a create/update/delete
+// RenderEntriesList re-renders the history list after a create/update/delete
 // and asks the chart controls to refresh themselves too, since a changed
 // entry can affect whatever range/series the user currently has selected.
-func (s *server) renderEntriesList(w http.ResponseWriter) {
+func (s *Server) RenderEntriesList(w http.ResponseWriter) {
 	entries, err := db.ListEntries(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -26,21 +26,21 @@ func (s *server) renderEntriesList(w http.ResponseWriter) {
 	}
 	w.Header().Set("HX-Trigger", "entries-changed")
 	data := struct{ Rows []history.Row }{Rows: history.BuildRows(entries)}
-	if err := tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// handleEntriesList renders the history list filtered by the entries-filter
+// HandleEntriesList renders the history list filtered by the entries-filter
 // form — period, plus the exact same range/from/until triple the chart's
 // own time-range-picker submits (it's the same shared component), so a
 // preset like range=30 is resolved by timerange.Resolve the same way for
-// both. Registered separately from the CRUD handlers above so a
+// both. Registered separately from the CRUD handlers below so a
 // create/update/delete's own response can keep rendering the unfiltered
 // list — the filter form re-applies itself afterward via
 // hx-trigger="... entries-changed from:body", so the visible list ends up
 // filtered either way, just via one extra round-trip.
-func (s *server) handleEntriesList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleEntriesList(w http.ResponseWriter, r *http.Request) {
 	entries, err := db.ListEntries(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -51,14 +51,14 @@ func (s *server) handleEntriesList(w http.ResponseWriter, r *http.Request) {
 	if rangeParam == "" {
 		rangeParam = "all"
 	}
-	window := timerange.Resolve(rangeParam, r.URL.Query().Get("from"), r.URL.Query().Get("until"), time.Now())
+	window := timerange.Resolve(rangeParam, r.URL.Query().Get("from"), r.URL.Query().Get("until"), s.now())
 	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries), periodParam, window)}
-	if err := tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -74,14 +74,14 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid period_override", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateEntry(s.db, recordedAt, weightG, periodOverride, time.Now()); err != nil {
+	if _, err := db.CreateEntry(s.db, recordedAt, weightG, periodOverride, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderEntriesList(w)
+	s.RenderEntriesList(w)
 }
 
-func (s *server) handleEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -93,12 +93,12 @@ func (s *server) handleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := history.BuildRows([]db.Entry{entry})
-	if err := tmpl.ExecuteTemplate(w, "row-edit", rows[0]); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "row-edit", rows[0]); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleCancelEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleCancelEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -111,7 +111,7 @@ func (s *server) handleCancelEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range history.BuildRows(entries) {
 		if row.ID == id {
-			if err := tmpl.ExecuteTemplate(w, "row", row); err != nil {
+			if err := s.tmpl.ExecuteTemplate(w, "row", row); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -120,7 +120,7 @@ func (s *server) handleCancelEdit(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -145,10 +145,10 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderEntriesList(w)
+	s.RenderEntriesList(w)
 }
 
-func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -158,5 +158,5 @@ func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeDeleteError(w, err)
 		return
 	}
-	s.renderEntriesList(w)
+	s.RenderEntriesList(w)
 }

@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"fmt"
@@ -7,12 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"weight-tracker/internal/db"
 )
 
-// handleBackup serves a consistent snapshot of the whole database as a
+// HandleBackup serves a consistent snapshot of the whole database as a
 // downloadable file. Unlike /export.csv — which covers entries only, and
 // only the fields the CSV format carries — this is the actual SQLite file,
 // so it restores goals, markers, period overrides, and ids too: copy it
@@ -21,7 +20,7 @@ import (
 // The snapshot is built via VACUUM INTO rather than by copying the database
 // file off disk, because a live database has in-flight WAL content that a
 // plain file copy would miss or tear.
-func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleBackup(w http.ResponseWriter, r *http.Request) {
 	// VACUUM INTO writes a whole second copy, so it needs somewhere with
 	// room for one. The database is small (a decade of twice-daily weigh-ins
 	// is a few MB), which is why the system temp dir is fine even where it
@@ -56,7 +55,7 @@ func (s *server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := fmt.Sprintf("weight-tracker-backup-%s.db", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("weight-tracker-backup-%s.db", s.now().Format("2006-01-02"))
 	w.Header().Set("Content-Type", "application/vnd.sqlite3")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	// Set explicitly so the browser can show real download progress rather

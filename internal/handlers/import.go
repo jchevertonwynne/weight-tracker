@@ -1,20 +1,19 @@
-package main
+package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/importer"
 )
 
-func (s *server) handleImportForm(w http.ResponseWriter, _ *http.Request) {
-	if err := tmpl.ExecuteTemplate(w, "import", nil); err != nil {
+func (s *Server) HandleImportForm(w http.ResponseWriter, _ *http.Request) {
+	if err := s.tmpl.ExecuteTemplate(w, "import", nil); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleImport(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleImport(w http.ResponseWriter, r *http.Request) {
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "missing file", http.StatusBadRequest)
@@ -48,7 +47,7 @@ func (s *server) handleImport(w http.ResponseWriter, r *http.Request) {
 		newEntries[i] = db.NewEntry{RecordedAt: row.RecordedAt, WeightG: row.WeightG}
 	}
 
-	inserted, err := db.BulkCreateEntries(s.db, newEntries, existing, time.Now())
+	inserted, err := db.BulkCreateEntries(s.db, newEntries, existing, s.now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -75,7 +74,7 @@ func (s *server) handleImport(w http.ResponseWriter, r *http.Request) {
 		Errors:     skippedErrors,
 		Truncated:  truncated,
 	}
-	if err := tmpl.ExecuteTemplate(w, "import-result", data); err != nil {
+	if err := s.tmpl.ExecuteTemplate(w, "import-result", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

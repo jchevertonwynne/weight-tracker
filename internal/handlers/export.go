@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"encoding/csv"
@@ -11,7 +11,7 @@ import (
 	"weight-tracker/internal/weight"
 )
 
-func (s *server) handleExport(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) HandleExport(w http.ResponseWriter, _ *http.Request) {
 	entries, err := db.ListEntries(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -23,7 +23,7 @@ func (s *server) handleExport(w http.ResponseWriter, _ *http.Request) {
 		return entries[i].RecordedAt.Before(entries[j].RecordedAt)
 	})
 
-	filename := fmt.Sprintf("weight-tracker-export-%s.csv", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("weight-tracker-export-%s.csv", s.now().Format("2006-01-02"))
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,20 +12,34 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"weight-tracker/internal/db"
+	"weight-tracker/internal/handlers"
 )
+
+// testServer bundles a *handlers.Server with the raw *sql.DB it was built
+// from, so tests can both drive HTTP handlers (via the embedded Server)
+// and assert on stored state directly (via db.ListEntries(s.db) etc.) —
+// handlers.Server's own db field is private to its package.
+type testServer struct {
+	*handlers.Server
+	db *sql.DB
+}
 
 // newTestServer builds a server backed by a throwaway on-disk database.
 // t.TempDir is cleaned up automatically, so each test gets a fresh schema.
-func newTestServer(t *testing.T) *server {
+// Uses the same templatesFS/staticFS main.go embeds, and the real
+// time.Now — a test that needs a fixed clock instead can call
+// handlers.New directly.
+func newTestServer(t *testing.T) *testServer {
 	t.Helper()
 	sqlDB, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open test database: %v", err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
-	return &server{db: sqlDB}
+	return &testServer{Server: handlers.New(sqlDB, templatesFS, staticFS, time.Now), db: sqlDB}
 }
 
 // postForm runs a urlencoded form POST/PUT through the handler under test.
@@ -66,7 +81,7 @@ func TestHandleCreateRejectsInvalidWeights(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestServer(t)
-			rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm(tc.weight))
+			rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm(tc.weight))
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
@@ -85,7 +100,7 @@ func TestHandleCreateAcceptsValidWeights(t *testing.T) {
 	for _, weight := range []string{"82.4", "0.1", "1000"} {
 		t.Run(weight, func(t *testing.T) {
 			s := newTestServer(t)
-			rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm(weight))
+			rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm(weight))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
 			}
@@ -104,7 +119,7 @@ func TestHandleCreateRejectsInvalidPeriodOverride(t *testing.T) {
 	s := newTestServer(t)
 	form := entryForm("82.4")
 	form.Set("period_override", "afternoon")
-	rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", form)
+	rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -114,7 +129,7 @@ func TestHandleCreateRejectsInvalidTimestamp(t *testing.T) {
 	s := newTestServer(t)
 	form := entryForm("82.4")
 	form.Set("recorded_at_date", "not-a-date")
-	rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", form)
+	rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -125,7 +140,7 @@ func TestHandleGoalCreateRejectsInvalidWeights(t *testing.T) {
 		t.Run(weight, func(t *testing.T) {
 			s := newTestServer(t)
 			form := url.Values{"weight_kg": {weight}, "effective_from": {"2026-08-01"}}
-			rec := postForm(t, s.handleGoalCreate, http.MethodPost, "/goals", form)
+			rec := postForm(t, s.HandleGoalCreate, http.MethodPost, "/goals", form)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
@@ -144,7 +159,7 @@ func TestHandleMarkerCreateRequiresANote(t *testing.T) {
 	for _, note := range []string{"", "   "} {
 		s := newTestServer(t)
 		form := url.Values{"date": {"2026-08-10"}, "note": {note}}
-		rec := postForm(t, s.handleMarkerCreate, http.MethodPost, "/markers", form)
+		rec := postForm(t, s.HandleMarkerCreate, http.MethodPost, "/markers", form)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("note %q: status = %d, want 400", note, rec.Code)
 		}
@@ -165,12 +180,12 @@ func TestDeleteMissingRowReturns404(t *testing.T) {
 	// Regression: deleting an already-deleted id used to report success.
 	tests := []struct {
 		name   string
-		handle func(*server) http.HandlerFunc
+		handle func(*testServer) http.HandlerFunc
 		target string
 	}{
-		{"entry", func(s *server) http.HandlerFunc { return s.handleDelete }, "/entries/999"},
-		{"goal", func(s *server) http.HandlerFunc { return s.handleGoalDelete }, "/goals/999"},
-		{"marker", func(s *server) http.HandlerFunc { return s.handleMarkerDelete }, "/markers/999"},
+		{"entry", func(s *testServer) http.HandlerFunc { return s.HandleDelete }, "/entries/999"},
+		{"goal", func(s *testServer) http.HandlerFunc { return s.HandleGoalDelete }, "/goals/999"},
+		{"marker", func(s *testServer) http.HandlerFunc { return s.HandleMarkerDelete }, "/markers/999"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,7 +200,7 @@ func TestDeleteMissingRowReturns404(t *testing.T) {
 
 func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	s := newTestServer(t)
-	rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4"))
+	rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create failed: %d", rec.Code)
 	}
@@ -195,7 +210,7 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	}
 
 	id := entries[0].ID
-	rec = deleteRequest(t, s.handleDelete, "/entries/1", "1")
+	rec = deleteRequest(t, s.HandleDelete, "/entries/1", "1")
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -208,7 +223,7 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	}
 
 	// Deleting the same id a second time is now a 404, not a silent success.
-	rec = deleteRequest(t, s.handleDelete, "/entries/1", "1")
+	rec = deleteRequest(t, s.HandleDelete, "/entries/1", "1")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("second delete status = %d, want 404", rec.Code)
 	}
@@ -216,7 +231,7 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 
 func TestDeleteRejectsNonNumericID(t *testing.T) {
 	s := newTestServer(t)
-	rec := deleteRequest(t, s.handleDelete, "/entries/abc", "abc")
+	rec := deleteRequest(t, s.HandleDelete, "/entries/abc", "abc")
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -263,7 +278,7 @@ func TestHandleImportAcceptsEveryUnitTheFormOffers(t *testing.T) {
 		t.Run(tc.unit, func(t *testing.T) {
 			s := newTestServer(t)
 			rec := httptest.NewRecorder()
-			s.handleImport(rec, uploadCSV(t, tc.csv, tc.unit))
+			s.HandleImport(rec, uploadCSV(t, tc.csv, tc.unit))
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
 			}
@@ -284,7 +299,7 @@ func TestHandleImportAcceptsEveryUnitTheFormOffers(t *testing.T) {
 func TestHandleImportRejectsUnknownUnit(t *testing.T) {
 	s := newTestServer(t)
 	rec := httptest.NewRecorder()
-	s.handleImport(rec, uploadCSV(t, "recorded_at,weight\n2026-08-14T07:00:00Z,81.5\n", "stone"))
+	s.HandleImport(rec, uploadCSV(t, "recorded_at,weight\n2026-08-14T07:00:00Z,81.5\n", "stone"))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
 	}
@@ -296,7 +311,7 @@ func TestHandleImportIsIdempotent(t *testing.T) {
 
 	for i := range 2 {
 		rec := httptest.NewRecorder()
-		s.handleImport(rec, uploadCSV(t, csv, "kg"))
+		s.HandleImport(rec, uploadCSV(t, csv, "kg"))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("import %d: status = %d", i+1, rec.Code)
 		}
@@ -319,13 +334,13 @@ func TestHandleExportRoundTripsThroughImport(t *testing.T) {
 	for _, c := range created {
 		form := entryForm(c.weight)
 		form.Set("recorded_at_time", c.time)
-		if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
+		if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
 			t.Fatalf("create %s at %s failed: %d", c.weight, c.time, rec.Code)
 		}
 	}
 
 	rec := httptest.NewRecorder()
-	s.handleExport(rec, httptest.NewRequest(http.MethodGet, "/export.csv", nil))
+	s.HandleExport(rec, httptest.NewRequest(http.MethodGet, "/export.csv", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export status = %d", rec.Code)
 	}
@@ -343,7 +358,7 @@ func TestHandleExportRoundTripsThroughImport(t *testing.T) {
 	// Feed the export straight back into a fresh database.
 	fresh := newTestServer(t)
 	importRec := httptest.NewRecorder()
-	fresh.handleImport(importRec, uploadCSV(t, exported, "kg"))
+	fresh.HandleImport(importRec, uploadCSV(t, exported, "kg"))
 	if importRec.Code != http.StatusOK {
 		t.Fatalf("re-import status = %d (body: %s)", importRec.Code, importRec.Body)
 	}
@@ -370,11 +385,11 @@ func TestHandleExportRoundTripsThroughImport(t *testing.T) {
 
 func TestHandleIndexRenders(t *testing.T) {
 	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
 		t.Fatalf("create failed: %d", rec.Code)
 	}
 	rec := httptest.NewRecorder()
-	s.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	s.HandleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -389,11 +404,11 @@ func TestHandleIndexRenders(t *testing.T) {
 
 func TestHandleChartReturnsJSON(t *testing.T) {
 	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
 		t.Fatalf("create failed: %d", rec.Code)
 	}
 	rec := httptest.NewRecorder()
-	s.handleChart(rec, httptest.NewRequest(http.MethodGet, "/chart?range=all&series=all", nil))
+	s.HandleChart(rec, httptest.NewRequest(http.MethodGet, "/chart?range=all&series=all", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -407,19 +422,19 @@ func TestHandleChartReturnsJSON(t *testing.T) {
 
 func TestHandleDeleteAllClearsEverything(t *testing.T) {
 	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
 		t.Fatalf("create entry failed: %d", rec.Code)
 	}
 	goalForm := url.Values{"weight_kg": {"78"}, "effective_from": {"2026-08-01"}}
-	if rec := postForm(t, s.handleGoalCreate, http.MethodPost, "/goals", goalForm); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleGoalCreate, http.MethodPost, "/goals", goalForm); rec.Code != http.StatusOK {
 		t.Fatalf("create goal failed: %d", rec.Code)
 	}
 	markerForm := url.Values{"date": {"2026-08-10"}, "note": {"started"}}
-	if rec := postForm(t, s.handleMarkerCreate, http.MethodPost, "/markers", markerForm); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleMarkerCreate, http.MethodPost, "/markers", markerForm); rec.Code != http.StatusOK {
 		t.Fatalf("create marker failed: %d", rec.Code)
 	}
 
-	rec := postForm(t, s.handleDeleteAll, http.MethodPost, "/settings/delete-all", nil)
+	rec := postForm(t, s.HandleDeleteAll, http.MethodPost, "/settings/delete-all", nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Errorf("status = %d, want 303", rec.Code)
 	}
@@ -434,16 +449,16 @@ func TestHandleDeleteAllClearsEverything(t *testing.T) {
 
 func TestHandleBackupServesARestorableDatabase(t *testing.T) {
 	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
 		t.Fatalf("create entry failed: %d", rec.Code)
 	}
 	markerForm := url.Values{"date": {"2026-08-10"}, "note": {"started cutting"}}
-	if rec := postForm(t, s.handleMarkerCreate, http.MethodPost, "/markers", markerForm); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleMarkerCreate, http.MethodPost, "/markers", markerForm); rec.Code != http.StatusOK {
 		t.Fatalf("create marker failed: %d", rec.Code)
 	}
 
 	rec := httptest.NewRecorder()
-	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	s.HandleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
 	}
@@ -495,7 +510,7 @@ func TestHandleBackupServesARestorableDatabase(t *testing.T) {
 func TestHandleBackupOnAnEmptyDatabase(t *testing.T) {
 	s := newTestServer(t)
 	rec := httptest.NewRecorder()
-	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	s.HandleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -513,7 +528,7 @@ func TestHandleBackupCleansUpItsStagingFile(t *testing.T) {
 	}
 	s := newTestServer(t)
 	rec := httptest.NewRecorder()
-	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	s.HandleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -528,18 +543,18 @@ func TestHandleBackupCleansUpItsStagingFile(t *testing.T) {
 
 func TestHandleBackupDoesNotDisturbTheLiveDatabase(t *testing.T) {
 	s := newTestServer(t)
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4")); rec.Code != http.StatusOK {
 		t.Fatalf("create failed: %d", rec.Code)
 	}
 	rec := httptest.NewRecorder()
-	s.handleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
+	s.HandleBackup(rec, httptest.NewRequest(http.MethodGet, "/backup.db", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("backup status = %d", rec.Code)
 	}
 	// Writes and reads still work afterwards.
 	form := entryForm("81.9")
 	form.Set("recorded_at_time", "21:00")
-	if rec := postForm(t, s.handleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
+	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
 		t.Errorf("create after backup failed: %d", rec.Code)
 	}
 	entries, err := db.ListEntries(s.db)
@@ -554,7 +569,7 @@ func TestHandleBackupDoesNotDisturbTheLiveDatabase(t *testing.T) {
 func TestHandleServiceWorker(t *testing.T) {
 	s := newTestServer(t)
 	rec := httptest.NewRecorder()
-	s.handleServiceWorker(rec, httptest.NewRequest(http.MethodGet, "/sw.js", nil))
+	s.HandleServiceWorker(rec, httptest.NewRequest(http.MethodGet, "/sw.js", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)

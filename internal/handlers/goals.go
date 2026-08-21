@@ -1,30 +1,29 @@
-package main
+package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/goals"
 )
 
-// renderGoalsList re-renders the goals-list card and fires goals-changed so
+// RenderGoalsList re-renders the goals-list card and fires goals-changed so
 // the chart controls (which also affect the plotted goal reference lines)
 // refresh themselves too.
-func (s *server) renderGoalsList(w http.ResponseWriter) {
+func (s *Server) RenderGoalsList(w http.ResponseWriter) {
 	goalList, err := db.ListGoals(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("HX-Trigger", "goals-changed")
-	data := struct{ Goals []goals.Row }{Goals: goals.BuildRows(goalList, time.Now())}
-	if err := tmpl.ExecuteTemplate(w, "goals-list", data); err != nil {
+	data := struct{ Goals []goals.Row }{Goals: goals.BuildRows(goalList, s.now())}
+	if err := s.tmpl.ExecuteTemplate(w, "goals-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGoalCreate(w http.ResponseWriter, r *http.Request) {
 	weightG, err := parseWeightG(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -35,14 +34,14 @@ func (s *server) handleGoalCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateGoal(s.db, weightG, effectiveFrom, time.Now()); err != nil {
+	if _, err := db.CreateGoal(s.db, weightG, effectiveFrom, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderGoalsList(w)
+	s.RenderGoalsList(w)
 }
 
-func (s *server) handleGoalEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGoalEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -53,13 +52,13 @@ func (s *server) handleGoalEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	rows := goals.BuildRows([]db.Goal{goal}, time.Now())
-	if err := tmpl.ExecuteTemplate(w, "goal-row-edit", rows[0]); err != nil {
+	rows := goals.BuildRows([]db.Goal{goal}, s.now())
+	if err := s.tmpl.ExecuteTemplate(w, "goal-row-edit", rows[0]); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (s *server) handleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -70,9 +69,9 @@ func (s *server) handleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, row := range goals.BuildRows(goalList, time.Now()) {
+	for _, row := range goals.BuildRows(goalList, s.now()) {
 		if row.ID == id {
-			if err := tmpl.ExecuteTemplate(w, "goal-row", row); err != nil {
+			if err := s.tmpl.ExecuteTemplate(w, "goal-row", row); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 			return
@@ -81,7 +80,7 @@ func (s *server) handleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -101,10 +100,10 @@ func (s *server) handleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderGoalsList(w)
+	s.RenderGoalsList(w)
 }
 
-func (s *server) handleGoalDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGoalDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDPath(r)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
@@ -114,5 +113,5 @@ func (s *server) handleGoalDelete(w http.ResponseWriter, r *http.Request) {
 		writeDeleteError(w, err)
 		return
 	}
-	s.renderGoalsList(w)
+	s.RenderGoalsList(w)
 }
