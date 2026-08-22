@@ -290,3 +290,82 @@ func TestBuildWindowChart(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildWindowChartDropsWindowsMatchingTheOneBefore covers the rule that
+// a timescale is only offered when it actually covers more nights than the
+// previous one. A 90-day window over ten days of history holds exactly the
+// nights the 30-day window does, so it computes an identical mean, range
+// and whiskers — a second column inviting the reader to find a difference
+// that cannot exist.
+func TestBuildWindowChartDropsWindowsMatchingTheOneBefore(t *testing.T) {
+	now := at(t, "2026-08-22 12:00")
+
+	// nightsOfHistory builds an evening/morning pair for each of the last n
+	// days, which is what WindowedPairs counts.
+	nightsOfHistory := func(n int) []db.Entry {
+		var entries []db.Entry
+		var id int64
+		for d := n; d >= 1; d-- {
+			evening := now.AddDate(0, 0, -d)
+			morning := evening.AddDate(0, 0, 1)
+			id++
+			entries = append(entries, testsupport.Entry(id,
+				time.Date(evening.Year(), evening.Month(), evening.Day(), 21, 0, 0, 0, evening.Location()), 84.0, ""))
+			id++
+			entries = append(entries, testsupport.Entry(id,
+				time.Date(morning.Year(), morning.Month(), morning.Day(), 7, 0, 0, 0, morning.Location()), 83.0, ""))
+		}
+		return entries
+	}
+
+	labelsFor := func(days int) []string {
+		var labels []string
+		for _, p := range BuildWindowChart(nightsOfHistory(days), nil, now).Points {
+			labels = append(labels, p.Label)
+		}
+		return labels
+	}
+
+	tests := []struct {
+		days int
+		want []string
+	}{
+		// Everything logged fits inside a week, so every longer window is
+		// the same week.
+		{3, []string{"7d"}},
+		// The example that prompted this: 30d sees more than 7d, but 90d,
+		// 1y and all-time see exactly what 30d sees.
+		{10, []string{"7d", "30d"}},
+		{45, []string{"7d", "30d", "90d"}},
+		{120, []string{"7d", "30d", "90d", "1y"}},
+		{400, []string{"7d", "30d", "90d", "1y", "All"}},
+	}
+	for _, tc := range tests {
+		got := labelsFor(tc.days)
+		if len(got) != len(tc.want) {
+			t.Errorf("%d nights: got %v, want %v", tc.days, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("%d nights: got %v, want %v", tc.days, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func TestBuildWindowChartNamesEveryWindow(t *testing.T) {
+	now := at(t, "2026-08-22 12:00")
+	entries := []db.Entry{
+		entry(1, at(t, "2026-08-20 21:00"), 84.0, ""),
+		entry(2, at(t, "2026-08-21 07:00"), 83.0, ""),
+	}
+	// The toggle beside the chart is built from these, so a window without a
+	// spelled-out name would render as a bare "7d" checkbox.
+	for _, p := range BuildWindowChart(entries, nil, now).Points {
+		if p.Name == "" {
+			t.Errorf("window %q has no display name", p.Label)
+		}
+	}
+}

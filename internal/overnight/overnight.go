@@ -5,7 +5,6 @@ package overnight
 
 import (
 	"math"
-	"strconv"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -145,16 +144,23 @@ func WindowedPairs(entries []db.Entry, window timerange.Window) []Pair {
 
 // windowSpans are the fixed trailing windows compared side by side in the
 // "Range by timescale" chart — unlike the rest of the Overnight tab, this
-// view isn't affected by the shared time-range-picker: seeing 7d/30d/90d
-// side by side is the point, so it always computes all three regardless of
-// whatever range the filter above is set to.
+// view isn't affected by the shared time-range-picker: seeing the
+// timescales side by side is the point, so it always computes them all
+// regardless of whatever range the filter above is set to.
+//
+// Ordered shortest to longest, which is what lets BuildWindowChart drop a
+// window covering no more nights than the one before it. A Range string
+// rather than a day count so "all" can sit at the end of the same list.
 var windowSpans = []struct {
-	Label string
-	Days  int
+	Label string // short, for the chart's x-axis
+	Name  string // spelled out, for the toggle beside the chart
+	Range string
 }{
-	{"7d", 7},
-	{"30d", 30},
-	{"90d", 90},
+	{"7d", "7 days", "7"},
+	{"30d", "30 days", "30"},
+	{"90d", "90 days", "90"},
+	{"1y", "1 year", "365"},
+	{"All", "All time", "all"},
 }
 
 // WindowPoint is one window's box-plot-style entry in the "Range by
@@ -168,6 +174,7 @@ var windowSpans = []struct {
 // Mean in that case, for the same reason).
 type WindowPoint struct {
 	Label     string  `json:"label"`
+	Name      string  `json:"name"`
 	Count     int     `json:"count"`
 	HasRange  bool    `json:"hasRange"`
 	MeanKg    float64 `json:"meanKg"`
@@ -211,11 +218,24 @@ func sampleStdDev(deltas []int64, meanG float64) (stddev float64, ok bool) {
 func BuildWindowChart(entries []db.Entry, allGoals []db.Goal, now time.Time) WindowChart {
 	var points []WindowPoint
 	anyData := false
+	// Tracks the pair count of the last window actually kept, so a window is
+	// compared against what is on the chart rather than against the span
+	// immediately before it — with ten days logged, 90d is dropped for
+	// matching 30d, and 1y is then compared against 30d too.
+	lastCount := -1
 	for _, span := range windowSpans {
-		window := timerange.Resolve(strconv.Itoa(span.Days), "", "", now)
+		window := timerange.Resolve(span.Range, "", "", now)
 		pairs := WindowedPairs(entries, window)
 
-		point := WindowPoint{Label: span.Label, Count: len(pairs)}
+		// A window covering the same nights as the previous one computes the
+		// same mean, range and whiskers, so it is a duplicate column that
+		// invites the reader to find a difference that isn't there.
+		if len(pairs) == lastCount {
+			continue
+		}
+		lastCount = len(pairs)
+
+		point := WindowPoint{Label: span.Label, Name: span.Name, Count: len(pairs)}
 		if len(pairs) > 0 {
 			anyData = true
 			deltas := make([]int64, len(pairs))

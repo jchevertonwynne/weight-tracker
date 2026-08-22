@@ -73,20 +73,10 @@
 					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5">
 			</label>
 		</div>
-		<div class="chart-controls-row" id="overnight-window-toggles">
-			<label class="field field-checkbox">
-				<input type="checkbox" id="overnight-window-toggle-7d" data-window="7d" checked hx-preserve="true" autocomplete="off">
-				<span>7 days</span>
-			</label>
-			<label class="field field-checkbox">
-				<input type="checkbox" id="overnight-window-toggle-30d" data-window="30d" checked hx-preserve="true" autocomplete="off">
-				<span>30 days</span>
-			</label>
-			<label class="field field-checkbox">
-				<input type="checkbox" id="overnight-window-toggle-90d" data-window="90d" checked hx-preserve="true" autocomplete="off">
-				<span>90 days</span>
-			</label>
-		</div>
+		{{/* Filled in by chart-app.js from /overnight/windows: which
+		     timescales are worth offering depends on how much history
+		     exists, and only the server knows that. */}}
+		<div class="chart-controls-row" id="overnight-window-toggles"></div>
 		<p class="empty" id="overnight-window-empty" hidden></p>
 		{{/* Only meaningful once a target is entered and the boxes are
 		     projected onto bedtime weight; chart-app.js toggles it. */}}

@@ -799,6 +799,46 @@ function calendarTicks(axis) {
 	let chart = null;
 	let cachedData = null; // last successful /overnight/windows fetch
 
+	// Which timescales are worth offering depends on how much history there
+	// is — a 90-day window over ten days of data is the same figures as the
+	// 30-day one — so the server decides and the toggles are built from what
+	// it returns rather than hardcoded in the template.
+	//
+	// The set holds the windows the user has switched *off*, so one that
+	// appears later (once there is enough history for it to differ) arrives
+	// switched on. It also survives the toggles being rebuilt, which the old
+	// hx-preserve on static checkboxes used to handle.
+	const uncheckedWindows = new Set();
+
+	function renderWindowToggles(data) {
+		const container = document.getElementById('overnight-window-toggles');
+		if (!container) return;
+		const points = (data && data.points) || [];
+		container.replaceChildren();
+		points.forEach((p) => {
+			const label = document.createElement('label');
+			label.className = 'field field-checkbox';
+
+			const input = document.createElement('input');
+			input.type = 'checkbox';
+			input.dataset.window = p.label;
+			input.checked = !uncheckedWindows.has(p.label);
+			input.autocomplete = 'off';
+			input.addEventListener('change', () => {
+				if (input.checked) uncheckedWindows.delete(p.label);
+				else uncheckedWindows.add(p.label);
+				renderAll();
+			});
+
+			const text = document.createElement('span');
+			text.textContent = p.name || p.label;
+
+			label.appendChild(input);
+			label.appendChild(text);
+			container.appendChild(label);
+		});
+	}
+
 	function checkedWindowLabels() {
 		return Array.from(document.querySelectorAll('#overnight-window-toggles input[data-window]'))
 			.filter((el) => el.checked)
@@ -1082,6 +1122,10 @@ function calendarTicks(axis) {
 
 	function renderAll() {
 		if (!cachedData) return;
+		if (!document.querySelector('#overnight-window-toggles input[data-window]')) {
+			// Rebuilt after an htmx swap replaced the container.
+			renderWindowToggles(cachedData);
+		}
 		const checked = checkedWindowLabels();
 		renderChart(cachedData, checked);
 		recomputeTonightCalculator(cachedData, checked);
@@ -1110,6 +1154,10 @@ function calendarTicks(axis) {
 			.then((data) => {
 				cachedData = data;
 				autofillGoalTarget(data);
+				// Rebuilt here rather than only in renderAll, because which
+				// windows are on offer changes with the data: logging enough
+				// history for 90d to differ from 30d should make it appear.
+				renderWindowToggles(data);
 				renderAll();
 			})
 			.catch((err) => console.error('overnight window chart refresh failed', err));
@@ -1118,9 +1166,6 @@ function calendarTicks(axis) {
 	document.body.addEventListener('htmx:afterSwap', refresh);
 	document.body.addEventListener('entries-changed', refresh);
 	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
-	document.body.addEventListener('change', (event) => {
-		if (event.target.matches('#overnight-window-toggles input[data-window]')) renderAll();
-	});
 	document.body.addEventListener('input', (event) => {
 		if (event.target.id === 'overnight-tonight-input') recomputeTonightCalculator(cachedData, checkedWindowLabels());
 		// Re-render the chart itself so entering/clearing a target
