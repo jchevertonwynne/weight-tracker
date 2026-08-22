@@ -1,0 +1,35 @@
+# systemd unit for the Cloudflare tunnel. Install to
+# /etc/systemd/system/cloudflared.service.
+#
+# Written out here rather than using `cloudflared service install`, for the
+# same reason weight-tracker.service is: the unit stays visible in the repo,
+# and it runs as jcw instead of root. The tunnel only makes outbound
+# connections, so it needs neither a privileged port nor root.
+
+[Unit]
+Description=Cloudflare tunnel for weight-tracker
+After=network-online.target weight-tracker.service
+Wants=network-online.target
+
+# cloudflared reconnects on its own when the network drops, but a hard
+# failure loop should not hit systemd's default 5-starts-in-10s limit and
+# give up for good on a machine meant to stay reachable. This belongs in
+# [Unit]; systemd ignores it in [Service].
+StartLimitIntervalSec=0
+
+[Service]
+User=jcw
+ExecStart=/usr/bin/cloudflared --no-autoupdate --config /etc/cloudflared/config.yml tunnel run
+Restart=on-failure
+RestartSec=5s
+
+# apt owns the binary and handles updates, so the self-updater is off above
+# and the filesystem can stay read-only to it. ProtectHome is read-only
+# rather than true because the tunnel credentials live in ~/.cloudflared.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -68,6 +68,101 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now weight-tracker
 ```
 
+## Expose it on the internet
+
+Tailscale already reaches the app, but only from devices running the
+Tailscale client. A Cloudflare tunnel puts it on `weight.jchevertonwynne.uk`
+for any browser.
+
+`cloudflared` runs alongside the app and makes an *outbound* connection to
+Cloudflare, which routes the hostname back down it. No port forwarding, no
+dynamic DNS, no inbound port on the router. TLS terminates at the edge on a
+certificate Cloudflare renews, so the origin stays plain HTTP on loopback.
+
+Service workers need a secure context, so `static/app.js`'s registration of
+`/sw.js` now succeeds over the tunnel where it silently failed over
+`http://jcwpi:8090`.
+
+### One-time setup
+
+Install cloudflared from Cloudflare's apt repo, so it updates with
+everything else:
+
+```sh
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main' \
+  | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install -y cloudflared
+```
+
+Authorize against the zone, then create the tunnel. `login` opens a browser
+and writes `~/.cloudflared/cert.pem`; `create` prints the tunnel UUID and
+writes the matching credentials JSON beside it:
+
+```sh
+cloudflared tunnel login
+cloudflared tunnel create weight-tracker
+```
+
+Pass `login` the zone you actually own. Given a hostname outside every zone
+on the account, `route dns` below will not error — it appends the zone it
+does find and creates a nonsense record.
+
+Copy `deploy/cloudflared-config.yml` to `/etc/cloudflared/config.yml`,
+replacing both `TUNNEL_UUID` placeholders. Copy `deploy/cloudflared.service`
+to `/etc/systemd/system/`. Then:
+
+```sh
+cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate
+sudo systemctl daemon-reload
+sudo systemctl enable --now cloudflared
+cloudflared tunnel route dns weight-tracker weight.jchevertonwynne.uk
+```
+
+`route dns` creates the proxied CNAME, so nothing needs adding by hand in
+the dashboard. It comes last deliberately: until that record exists the
+hostname does not resolve, so a misconfigured tunnel is never briefly
+public.
+
+### Put Access in front of it first
+
+**Before the DNS record exists, not after.** The app has no authentication —
+every route in `handlers.RegisterRoutes` is open. Public with nothing in
+front, any visitor can read every weigh-in, pull the database from
+`GET /backup.db`, and wipe it with `POST /settings/delete-all`. New
+hostnames appear in Certificate Transparency logs within seconds, so the
+gap is not quiet time.
+
+In the Zero Trust dashboard under Access → Applications, add a self-hosted
+application. Its destination must be a **public hostname** —
+`weight` + `jchevertonwynne.uk` — not a private IP, which routes at the
+network layer and would require the WARP client on every device, leaving
+the public hostname unprotected. Set the policy to *allow* / *emails* /
+your address and enable one-time PIN or Google. Free up to 50 users, so
+sharing later is one more email in the policy.
+
+Access challenges unauthenticated requests at the edge; they never reach
+the tunnel. Building sessions into the app instead would mean a login
+handler, session storage, and CSRF on every htmx `POST`/`PUT`/`DELETE` —
+worth it if the app ever grows per-user data, but not today.
+
+### Checking it
+
+```sh
+systemctl status cloudflared
+cloudflared tunnel info weight-tracker
+curl -sI https://weight.jchevertonwynne.uk/backup.db | head -1
+```
+
+That last one must be a `302` to a `cloudflareaccess.com` login URL. A `200`
+means requests are reaching the app unauthenticated — stop the tunnel until
+the Access policy is attached.
+
+Note that `make deploy` restarts `weight-tracker` but not `cloudflared`, so
+a deploy shows up as a few failed origin requests in the tunnel log rather
+than an outage.
+
 ## Continuous deployment
 
 Pushing to `main` deploys automatically, once this one-time setup is done:
