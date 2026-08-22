@@ -221,8 +221,10 @@ func MsOf(t time.Time) int64 {
 	return t.UnixMilli()
 }
 
-// DateLabel formats t as the short "Jan 2" label used in chart tooltips and
-// marker points.
+// DateLabel formats t as the "Jan 2, 2006" label used in chart tooltips and
+// marker points. The year is carried because these labels are read on the
+// all-time chart, where two readings a year apart otherwise show the same
+// "Jan 1" and nothing distinguishes them.
 func DateLabel(t time.Time) string {
-	return t.Format("Jan 2")
+	return t.Format("Jan 2, 2006")
 }

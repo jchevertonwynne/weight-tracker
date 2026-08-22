@@ -48,8 +48,8 @@ func TestVisible(t *testing.T) {
 		if got[0].ID != 2 {
 			t.Errorf("ID = %d, want 2 — the client colors markers by stable ID", got[0].ID)
 		}
-		if got[0].Date != "Aug 10" {
-			t.Errorf("Date = %q, want %q", got[0].Date, "Aug 10")
+		if got[0].Date != "Aug 10, 2026" {
+			t.Errorf("Date = %q, want %q", got[0].Date, "Aug 10, 2026")
 		}
 	})
 

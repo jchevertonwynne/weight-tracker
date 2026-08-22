@@ -170,6 +170,43 @@ func trendXY(source []rawPoint, window timerange.Window) []XY {
 	return xy
 }
 
+// axisExtent decides how far the x-axis runs. A bounded end of the
+// requested window wins over the data, so a range shows its whole span
+// whether or not every day of it was logged; an unbounded end falls back
+// to the data, extended to now so an open-ended range like "last 30 days"
+// still reaches today rather than stopping at the most recent reading.
+//
+// firstPoint/lastPoint are the extremes of the visible data, and are used
+// verbatim for "all time", which is unbounded at both ends and so is
+// exactly as wide as the data.
+func axisExtent(window timerange.Window, firstPoint, lastPoint, now time.Time) (from, until time.Time) {
+	from, until = firstPoint, lastPoint
+
+	if window.HasFrom {
+		from = window.From
+	}
+	if window.HasUntil {
+		until = window.Until
+	} else if window.HasFrom && now.After(until) {
+		// A range with a start has a definite length, so it runs to today
+		// even if the last few days went unlogged — that gap is part of what
+		// the range is showing. End of today rather than this moment, so
+		// "30 days" covers thirty whole days rather than twenty-nine and a
+		// fraction.
+		//
+		// A range unbounded at both ends ("all time") has no requested
+		// length, so it hugs the data instead of growing an empty tail.
+		y, m, d := now.Date()
+		until = time.Date(y, m, d, 23, 59, 59, int(time.Second-time.Nanosecond), now.Location())
+	}
+
+	// A window narrower than a single reading would collapse the axis.
+	if !from.Before(until) {
+		return firstPoint, lastPoint
+	}
+	return from, until
+}
+
 // Build assembles the chart JSON payload for one series/range combination.
 func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, today time.Time) Data {
 	chrono, overnightByID, dailyByID := weight.ChronologicalWithDeltas(allEntries)
@@ -247,11 +284,17 @@ func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, ra
 		return Data{Empty: emptyMessage(seriesParam)}
 	}
 
+	// The axis spans the range that was asked for, not just the part of it
+	// that happens to hold readings. A 30-day range with a week's data used
+	// to draw a week-wide chart, which quietly misrepresented both the
+	// density of the readings and how long the gap before them was.
+	axisFrom, axisUntil := axisExtent(window, pts[0].t, pts[len(pts)-1].t, today)
+
 	data := Data{
 		HasData: true,
 		IsBar:   isBar,
-		XMin:    timerange.MsOf(pts[0].t),
-		XMax:    timerange.MsOf(pts[len(pts)-1].t),
+		XMin:    timerange.MsOf(axisFrom),
+		XMax:    timerange.MsOf(axisUntil),
 	}
 
 	for _, p := range pts {
@@ -282,7 +325,7 @@ func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, ra
 		}
 
 		if len(allGoals) > 0 {
-			for _, seg := range goals.ClipSegments(goals.BuildSegments(allGoals), pts[0].t, pts[len(pts)-1].t) {
+			for _, seg := range goals.ClipSegments(goals.BuildSegments(allGoals), axisFrom, axisUntil) {
 				// Both endpoints of each segment are included so consecutive
 				// segments with different goal weights connect via a
 				// vertical jump at the boundary, rendering a step shape with
@@ -298,7 +341,7 @@ func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, ra
 	// Markers add context ("started new diet") regardless of which series
 	// is being viewed, so — unlike trend/goal — they apply to bar charts too.
 	if len(allMarkers) > 0 {
-		data.Markers = markers.Visible(allMarkers, pts[0].t, pts[len(pts)-1].t)
+		data.Markers = markers.Visible(allMarkers, axisFrom, axisUntil)
 	}
 
 	return data

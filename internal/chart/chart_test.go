@@ -170,11 +170,13 @@ func TestBuild(t *testing.T) {
 		if got.IsBar {
 			t.Error("IsBar = true, want a line chart for the all series")
 		}
-		if got.XMin != entries[0].RecordedAt.UnixMilli() {
-			t.Errorf("XMin = %d, want the first entry's timestamp", got.XMin)
+		// The axis spans the requested 30 days, not just the span of the
+		// readings — see TestBuildAxisSpansTheRequestedRange.
+		if got.XMin >= entries[0].RecordedAt.UnixMilli() {
+			t.Errorf("XMin = %d, want the range start, before the first entry", got.XMin)
 		}
-		if got.XMax != entries[4].RecordedAt.UnixMilli() {
-			t.Errorf("XMax = %d, want the last entry's timestamp", got.XMax)
+		if got.XMax <= entries[4].RecordedAt.UnixMilli() {
+			t.Errorf("XMax = %d, want the range end, after the last entry", got.XMax)
 		}
 	})
 
@@ -191,8 +193,8 @@ func TestBuild(t *testing.T) {
 		if got.Points[0].Value != "84.0 kg" {
 			t.Errorf("value label = %q, want %q", got.Points[0].Value, "84.0 kg")
 		}
-		if got.Points[0].Date != "Aug 14" {
-			t.Errorf("date label = %q, want %q", got.Points[0].Date, "Aug 14")
+		if got.Points[0].Date != "Aug 14, 2026" {
+			t.Errorf("date label = %q, want %q", got.Points[0].Date, "Aug 14, 2026")
 		}
 	})
 
@@ -338,4 +340,62 @@ func TestDayNumTracksElapsedTime(t *testing.T) {
 	if diff := dayNum(half) - dayNum(a); !nearlyEqual(diff, 0.5) {
 		t.Errorf("12h apart = %v days, want 0.5", diff)
 	}
+}
+
+// TestBuildAxisSpansTheRequestedRange covers the axis extent: a range is
+// drawn at the width it was asked for, whether or not every day of it was
+// logged. Before this, a 30-day range holding a week of readings drew a
+// week-wide chart, which misrepresented both how dense the readings were
+// and how long the gap before them was.
+func TestBuildAxisSpansTheRequestedRange(t *testing.T) {
+	today := testsupport.At(t, "2026-08-16 14:00")
+	// Three days of readings inside a thirty-day range.
+	entries := []db.Entry{
+		testsupport.Entry(1, testsupport.At(t, "2026-08-13 07:00"), 84.0, ""),
+		testsupport.Entry(2, testsupport.At(t, "2026-08-14 07:00"), 83.5, ""),
+		testsupport.Entry(3, testsupport.At(t, "2026-08-15 07:00"), 83.0, ""),
+	}
+
+	t.Run("a preset covers its whole span", func(t *testing.T) {
+		got := Build(entries, nil, nil, "30", "morning", "", "", today)
+		wantFrom := testsupport.At(t, "2026-07-18 00:00") // 30 days back, inclusive
+		if got.XMin != wantFrom.UnixMilli() {
+			t.Errorf("XMin = %s, want the range start %s",
+				time.UnixMilli(got.XMin), wantFrom)
+		}
+		// Open-ended at the top, so it runs to the end of today rather than
+		// stopping at the last reading.
+		gotUntil := time.UnixMilli(got.XMax)
+		if gotUntil.Year() != 2026 || gotUntil.Month() != time.August || gotUntil.Day() != 16 {
+			t.Errorf("XMax = %s, want the end of today", gotUntil)
+		}
+		if gotUntil.Hour() != 23 {
+			t.Errorf("XMax = %s, want the end of the day", gotUntil)
+		}
+		// Thirty whole days.
+		if days := gotUntil.Sub(time.UnixMilli(got.XMin)).Hours() / 24; days < 29.9 || days > 30.1 {
+			t.Errorf("axis spans %.2f days, want 30", days)
+		}
+	})
+
+	t.Run("a custom range uses both of its bounds", func(t *testing.T) {
+		got := Build(entries, nil, nil, "custom", "morning", "2026-08-01", "2026-08-20", today)
+		if want := testsupport.At(t, "2026-08-01 00:00").UnixMilli(); got.XMin != want {
+			t.Errorf("XMin = %s, want %s", time.UnixMilli(got.XMin), time.UnixMilli(want))
+		}
+		end := time.UnixMilli(got.XMax)
+		if end.Day() != 20 || end.Hour() != 23 {
+			t.Errorf("XMax = %s, want the end of 20 August", end)
+		}
+	})
+
+	t.Run("all time is exactly as wide as the data", func(t *testing.T) {
+		got := Build(entries, nil, nil, "all", "morning", "", "", today)
+		if got.XMin != entries[0].RecordedAt.UnixMilli() {
+			t.Errorf("XMin = %s, want the first reading", time.UnixMilli(got.XMin))
+		}
+		if got.XMax != entries[2].RecordedAt.UnixMilli() {
+			t.Errorf("XMax = %s, want the last reading", time.UnixMilli(got.XMax))
+		}
+	})
 }

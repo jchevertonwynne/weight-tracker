@@ -538,7 +538,7 @@ function calendarTicks(axis) {
 								if (!point) return '';
 								// Matches timerange.DateLabel, which formats the
 								// raw points server-side.
-								return point.date || new Date(point.x).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+								return point.date || new Date(point.x).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 							},
 							label: (item) => {
 								const value = (item.raw && item.raw.value) || `${Number(item.parsed.y).toFixed(1)} kg`;
