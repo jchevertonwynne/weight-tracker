@@ -333,12 +333,12 @@ func TestBuildWindowChartDropsWindowsMatchingTheOneBefore(t *testing.T) {
 		// Everything logged fits inside a week, so every longer window is
 		// the same week.
 		{3, []string{"7d"}},
-		// The example that prompted this: 30d sees more than 7d, but 90d,
-		// 1y and all-time see exactly what 30d sees.
+		// The example that prompted this: 30d sees more than 7d, but 90d
+		// and 1y see exactly what 30d sees.
 		{10, []string{"7d", "30d"}},
 		{45, []string{"7d", "30d", "90d"}},
 		{120, []string{"7d", "30d", "90d", "1y"}},
-		{400, []string{"7d", "30d", "90d", "1y", "All"}},
+		{400, []string{"7d", "30d", "90d", "1y"}},
 	}
 	for _, tc := range tests {
 		got := labelsFor(tc.days)

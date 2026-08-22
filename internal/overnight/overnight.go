@@ -149,8 +149,8 @@ func WindowedPairs(entries []db.Entry, window timerange.Window) []Pair {
 // regardless of whatever range the filter above is set to.
 //
 // Ordered shortest to longest, which is what lets BuildWindowChart drop a
-// window covering no more nights than the one before it. A Range string
-// rather than a day count so "all" can sit at the end of the same list.
+// window covering no more nights than the one before it. Range is the
+// string timerange.Resolve takes, so no conversion is needed here.
 var windowSpans = []struct {
 	Label string // short, for the chart's x-axis
 	Name  string // spelled out, for the toggle beside the chart
@@ -160,7 +160,6 @@ var windowSpans = []struct {
 	{"30d", "30 days", "30"},
 	{"90d", "90 days", "90"},
 	{"1y", "1 year", "365"},
-	{"All", "All time", "all"},
 }
 
 // WindowPoint is one window's box-plot-style entry in the "Range by
