@@ -125,6 +125,13 @@ the dashboard. It comes last deliberately: until that record exists the
 hostname does not resolve, so a misconfigured tunnel is never briefly
 public.
 
+Afterwards, `make deploy-tunnel` re-installs both files and restarts the
+tunnel, reading the UUID back off the Pi so it never has to live in the
+repo. It validates the rendered config before moving it into place, and is
+kept out of `make deploy` so a routine binary deploy does not restart the
+tunnel. CI cannot run it — the deploy key's forced-command wrapper allows
+only the two commands `deploy` issues.
+
 ### Put Access in front of it first
 
 **Before the DNS record exists, not after.** The app has no authentication —

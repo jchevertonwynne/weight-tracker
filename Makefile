@@ -13,25 +13,27 @@ PI_HOST ?= jcwpi
 PI_USER ?= jcw
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
+TUNNEL_NAME ?= weight-tracker
 
-.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy help
+.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy deploy-tunnel help
 
 help:
-	@echo "make run         - go run the app locally on $(ADDR), attached to this terminal"
-	@echo "make start       - build, then run detached in the background (daemon)"
-	@echo "make stop        - stop the background daemon started by 'make start'"
-	@echo "make restart     - stop then start the daemon"
-	@echo "make status      - check whether the daemon is running"
-	@echo "make logs        - tail the daemon's log file"
-	@echo "make build       - build a local binary into $(BIN_DIR)/"
-	@echo "make build-pi    - cross-compile for Raspberry Pi (PI_ARCH=$(PI_ARCH))"
-	@echo "make deploy      - build-pi, then scp + restart the systemd service on PI_HOST=$(PI_HOST)"
-	@echo "make clean       - stop the daemon, then remove build output and the local dev database"
-	@echo "make test        - go test ./... with the race detector"
-	@echo "make check       - everything CI runs: gofmt check, vet, tests"
-	@echo "make fmt         - gofmt all source files"
-	@echo "make vet         - go vet ./..."
-	@echo "make tidy        - go mod tidy"
+	@echo "make run           - go run the app locally on $(ADDR), attached to this terminal"
+	@echo "make start         - build, then run detached in the background (daemon)"
+	@echo "make stop          - stop the background daemon started by 'make start'"
+	@echo "make restart       - stop then start the daemon"
+	@echo "make status        - check whether the daemon is running"
+	@echo "make logs          - tail the daemon's log file"
+	@echo "make build         - build a local binary into $(BIN_DIR)/"
+	@echo "make build-pi      - cross-compile for Raspberry Pi (PI_ARCH=$(PI_ARCH))"
+	@echo "make deploy        - build-pi, then scp + restart the systemd service on PI_HOST=$(PI_HOST)"
+	@echo "make deploy-tunnel - install the cloudflared config + unit on PI_HOST and restart the tunnel"
+	@echo "make clean         - stop the daemon, then remove build output and the local dev database"
+	@echo "make test          - go test ./... with the race detector"
+	@echo "make check         - everything CI runs: gofmt check, vet, tests"
+	@echo "make fmt           - gofmt all source files"
+	@echo "make vet           - go vet ./..."
+	@echo "make tidy          - go mod tidy"
 
 run:
 	go run . -addr $(ADDR) -db $(DB)
@@ -108,6 +110,29 @@ deploy: build-pi
 		mv ~/$(BINARY)-new ~/$(BINARY)-$(PI_ARCH); \
 		chmod +x ~/$(BINARY)-$(PI_ARCH); \
 		sudo systemctl start $(BINARY)'
+
+# The tunnel UUID is deliberately not in the repo. The Pi already knows it,
+# so read it back here rather than committing it or carrying it as a CI
+# secret. Kept separate from 'deploy' on purpose: the tunnel config changes
+# rarely, and restarting cloudflared on every binary deploy would blip the
+# connection for no reason.
+#
+# CI cannot run this — the deploy key's forced-command wrapper allows only
+# the two commands 'deploy' issues, which keeps a leaked key unable to
+# rewrite what the tunnel exposes. Run it by hand.
+deploy-tunnel:
+	@uuid=`ssh $(PI_USER)@$(PI_HOST) 'cloudflared tunnel list --name $(TUNNEL_NAME) --output json | jq -r ".[0].id // empty"'`; \
+	if [ -z "$$uuid" ]; then \
+		echo "no tunnel named $(TUNNEL_NAME) on $(PI_HOST) - run 'cloudflared tunnel create $(TUNNEL_NAME)' there first"; \
+		exit 1; \
+	fi; \
+	echo "installing config for tunnel $$uuid"; \
+	sed "s/TUNNEL_UUID/$$uuid/g" deploy/cloudflared-config.yml \
+		| ssh $(PI_USER)@$(PI_HOST) 'cat > /tmp/cloudflared-config.yml \
+			&& cloudflared --config /tmp/cloudflared-config.yml tunnel ingress validate \
+			&& sudo mv /tmp/cloudflared-config.yml /etc/cloudflared/config.yml'
+	ssh $(PI_USER)@$(PI_HOST) 'sudo tee /etc/systemd/system/cloudflared.service >/dev/null' < deploy/cloudflared.service
+	ssh $(PI_USER)@$(PI_HOST) 'sudo systemctl daemon-reload && sudo systemctl restart cloudflared'
 
 clean: stop
 	rm -rf $(BIN_DIR)
