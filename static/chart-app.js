@@ -1051,6 +1051,19 @@ function calendarTicks(axis) {
 		recomputeTonightCalculator(cachedData, checked);
 	}
 
+	// autofillGoalTarget seeds the "Weigh-in calculator" target field with
+	// the current goal weight, if there is one, the first time it's empty —
+	// most people running this calculator want to know "can I make my goal
+	// weight", not start from a blank field every time. Only fires when the
+	// field is empty, so it never overwrites a value the user typed, and
+	// hx-preserve="true" on the input means htmx swaps keep whatever's
+	// already there rather than resetting it back to blank.
+	function autofillGoalTarget(data) {
+		const input = document.getElementById('overnight-calc-target');
+		if (!input || input.value !== '' || !data.hasGoal) return;
+		input.value = data.goalKg.toFixed(1);
+	}
+
 	function refresh() {
 		if (!document.getElementById('overnight-window-chart')) return;
 		fetch('/overnight/windows')
@@ -1060,6 +1073,7 @@ function calendarTicks(axis) {
 			})
 			.then((data) => {
 				cachedData = data;
+				autofillGoalTarget(data);
 				renderAll();
 			})
 			.catch((err) => console.error('overnight window chart refresh failed', err));
