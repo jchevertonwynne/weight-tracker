@@ -132,7 +132,9 @@ deploy-tunnel:
 			&& cloudflared --config /tmp/cloudflared-config.yml tunnel ingress validate \
 			&& sudo mv /tmp/cloudflared-config.yml /etc/cloudflared/config.yml'
 	ssh $(PI_USER)@$(PI_HOST) 'sudo tee /etc/systemd/system/cloudflared.service >/dev/null' < deploy/cloudflared.service
-	ssh $(PI_USER)@$(PI_HOST) 'sudo systemctl daemon-reload && sudo systemctl restart cloudflared'
+	ssh $(PI_USER)@$(PI_HOST) 'sudo systemctl daemon-reload \
+		&& sudo systemctl enable cloudflared \
+		&& sudo systemctl restart cloudflared'
 
 clean: stop
 	rm -rf $(BIN_DIR)
