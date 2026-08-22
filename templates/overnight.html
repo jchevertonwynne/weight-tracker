@@ -58,9 +58,13 @@
 			Enter the weight you need to hit at tomorrow's morning weigh-in.
 			With nothing entered, the boxes below show the overnight
 			<em>change</em> (kg) for each checked window; once you enter a
-			target, they shift onto your actual bedtime-weight ceiling — so
-			you can see not just a single "safe" number but the full range
-			each window's history supports.
+			target, they shift onto the bedtime weight that would get you
+			there.
+			<strong>Weighing less is always fine</strong> — the shaded area
+			below each box is the range that comfortably makes it. The box
+			itself is not a range you have to land in, only where one
+			standard deviation of your overnight losses leaves the outcome
+			uncertain.
 		</p>
 		<div class="entry-form">
 			<label class="field">
@@ -84,6 +88,13 @@
 			</label>
 		</div>
 		<p class="empty" id="overnight-window-empty" hidden></p>
+		{{/* Only meaningful once a target is entered and the boxes are
+		     projected onto bedtime weight; chart-app.js toggles it. */}}
+		<ul class="zone-key" id="overnight-zone-key" hidden>
+			<li><span class="zone-key-swatch zone-safe"></span>At or below — very likely to hit the target</li>
+			<li><span class="zone-key-swatch zone-borderline"></span>Could go either way</li>
+			<li><span class="zone-key-whisker"></span>Best and worst night on record</li>
+		</ul>
 		{{/* Fixed-height box rather than letting the canvas size itself: with
 		     maintainAspectRatio the height is derived from the measured width,
 		     so an htmx swap of this fragment re-measured mid-layout and the

@@ -8,6 +8,8 @@
 	--on-surface-muted: #666666;
 	--danger: #b3261e;
 	--gain: #b3261e;
+	--loss-zone: rgba(46, 125, 50, 0.16);
+	--borderline: #a25c00;
 	--loss: #146c2e;
 	--goal: #6a1b9a;
 	--morning: #7a5b00;
@@ -44,6 +46,8 @@
 		--on-surface-muted: #a0a0a0;
 		--danger: #ff6f60;
 		--gain: #ff6f60;
+		--loss-zone: rgba(129, 199, 132, 0.14);
+		--borderline: #e0a44a;
 		--loss: #4caf80;
 		--goal: #c792ea;
 		--morning: #ffcf6b;
@@ -663,4 +667,52 @@ select:focus {
 	height: 0.5rem;
 	border-radius: 50%;
 	flex: none;
+}
+
+/* Key for the weigh-in calculator's zones. The plot alone reads as "land
+   inside the box"; this states the part the shape cannot: below is better. */
+.zone-key {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 0.9rem;
+	padding: 0;
+	list-style: none;
+	font-size: 0.8rem;
+	color: var(--on-surface-muted);
+}
+
+.zone-key[hidden] {
+	display: none;
+}
+
+.zone-key li {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.zone-key-swatch {
+	width: 0.75rem;
+	height: 0.75rem;
+	border-radius: 2px;
+	flex: none;
+}
+
+.zone-safe {
+	background: var(--loss-zone);
+	border: 1px solid var(--loss);
+}
+
+.zone-borderline {
+	background: var(--borderline);
+}
+
+/* Mimics the whisker: a thin vertical line with end caps. */
+.zone-key-whisker {
+	width: 0.75rem;
+	height: 0.75rem;
+	flex: none;
+	border-top: 1.5px solid var(--on-surface-muted);
+	border-bottom: 1.5px solid var(--on-surface-muted);
+	background: linear-gradient(var(--on-surface-muted), var(--on-surface-muted)) center / 1.5px 100% no-repeat;
 }

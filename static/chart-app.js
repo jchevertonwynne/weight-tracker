@@ -704,6 +704,34 @@ function calendarTicks(axis) {
 	const meanTickHalfWidth = 18;
 	const overnightBoxPlotPlugin = {
 		id: 'overnightBoxPlot',
+
+		// Everything at or below the box is at least as good as the box, and
+		// a plain floating box says the opposite — it reads as a band you
+		// have to land inside, when weighing less at bedtime only makes the
+		// target easier. This shades from the bottom of the plot up to the
+		// cautious end of the box to say so, and it goes in beforeDatasetsDraw
+		// so the box and whiskers stay legible on top of it.
+		//
+		// Only in projected mode: without a target the axis is overnight
+		// change, where "lower is safer" is not what the numbers mean.
+		beforeDatasetsDraw(chartInstance, _args, opts) {
+			const { points, targetKg } = opts;
+			if (!points || !points.length) return;
+			if (typeof targetKg !== 'number' || !Number.isFinite(targetKg)) return;
+			const { ctx, chartArea, scales } = chartInstance;
+			const meta = chartInstance.getDatasetMeta(0);
+			ctx.save();
+			ctx.fillStyle = cssVar('--loss-zone');
+			points.forEach((p, i) => {
+				const element = meta && meta.data && meta.data[i];
+				const halfWidth = ((element && element.width) || 40) / 2;
+				const x = scales.x.getPixelForValue(i);
+				const yTop = scales.y.getPixelForValue(p.lowKg);
+				ctx.fillRect(x - halfWidth, yTop, halfWidth * 2, chartArea.bottom - yTop);
+			});
+			ctx.restore();
+		},
+
 		afterDatasetsDraw(chartInstance, _args, opts) {
 			const points = opts.points;
 			if (!points || !points.length) return;
@@ -872,6 +900,7 @@ function calendarTicks(axis) {
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
 		const emptyEl = document.getElementById('overnight-window-empty');
+		const zoneKey = document.getElementById('overnight-zone-key');
 		// The fixed-height box, not the canvas, is what gets hidden — hiding
 		// the canvas alone would leave its 320px box as a gap.
 		const box = canvas.closest('.chart-box') || canvas;
@@ -903,14 +932,19 @@ function calendarTicks(axis) {
 
 		const targetKg = currentTargetKg();
 		const plotPoints = targetKg === null ? points : projectOntoTarget(points, targetKg);
+		// The zones only exist once the boxes mean bedtime weight.
+		if (zoneKey) zoneKey.hidden = targetKg === null;
 
 		const labels = plotPoints.map((p) => p.label);
 		const boxes = plotPoints.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
-		// Bar color always follows the underlying overnight-change sign
-		// (loss/gain), never the projected absolute weight — otherwise
-		// every bar would flip to the same color once projected, since a
-		// bedtime ceiling in kg is always positive.
-		const colors = points.map((p) => colorFor(p.meanKg));
+		// Un-projected, the bar is a raw overnight change and its colour
+		// carries the loss/gain sign. Projected, every bar would be the same
+		// colour — a bedtime ceiling in kg is always positive — and the
+		// meaningful distinction is instead how confident the number is: the
+		// shaded zone below is comfortable, this band is the coin flip.
+		const colors = targetKg === null
+			? points.map((p) => colorFor(p.meanKg))
+			: points.map(() => cssVar('--borderline'));
 
 		try {
 			chart = new Chart(canvas, {
@@ -919,7 +953,7 @@ function calendarTicks(axis) {
 					datasets: [
 						{
 							type: 'bar',
-							label: targetKg === null ? 'Mean ± 1 SD' : 'Bedtime ceiling ± 1 SD',
+							label: targetKg === null ? 'Mean ± 1 SD' : 'Borderline band (± 1 SD)',
 							data: boxes,
 							backgroundColor: colors,
 							borderRadius: 4,
@@ -956,10 +990,12 @@ function calendarTicks(axis) {
 								title: (items) => plotPoints[items[0].dataIndex].label,
 								label: (item) => {
 									const p = plotPoints[item.dataIndex];
-									const lines = [(targetKg === null ? 'Mean: ' : 'Typical bedtime ceiling: ') + p.meanLabel];
+									const lines = [(targetKg === null ? 'Mean: ' : 'Typical bedtime weight: ') + p.meanLabel];
 									lines.push(
 										p.hasRange
-											? `±1 SD box: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg`
+											? (targetKg === null
+												? `±1 SD: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg`
+												: `Comfortable at or below ${p.lowKg.toFixed(1)} kg; uncertain up to ${p.highKg.toFixed(1)} kg`)
 											: 'Not enough nights yet for a range',
 									);
 									lines.push(`Widest ever: ${p.minKg.toFixed(1)} to ${p.maxKg.toFixed(1)} kg`);
