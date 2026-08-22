@@ -215,12 +215,28 @@ function initTimeRangePicker(root) {
 		});
 	});
 
-	customApplyBtn.addEventListener('click', () => {
+	function applyCustomRange() {
 		if (!customFromInput.value && !customUntilInput.value) return;
 		rangeInput.value = 'custom';
 		fromInput.value = customFromInput.value;
 		untilInput.value = customUntilInput.value;
 		apply();
+	}
+
+	customApplyBtn.addEventListener('click', applyCustomRange);
+
+	// Enter applies the range, which is what a text box in a popover invites
+	// you to do. preventDefault matters: both pickers sit inside a form — the
+	// chart's controls and the history filter — so the browser's implicit
+	// submission would otherwise fire first, reloading the page or sending
+	// the filter's htmx request with the old range still in the hidden
+	// inputs.
+	[customFromInput, customUntilInput].forEach((input) => {
+		input.addEventListener('keydown', (event) => {
+			if (event.key !== 'Enter') return;
+			event.preventDefault();
+			applyCustomRange();
+		});
 	});
 
 	syncRangeLabel();
