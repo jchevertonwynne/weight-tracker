@@ -1,12 +1,8 @@
 name: Image
 
-# Builds the container image for the k3s cluster on the Pi.
-#
-# Deliberately a separate workflow from ci.yml rather than another job in it:
-# during the migration the SSH-based deploy in ci.yml is still the live path,
-# and pushing an image must not be able to break it. Once the cluster is
-# serving, the deploy job in ci.yml goes away and this becomes the only route
-# to production.
+# Builds the container image the k3s cluster runs. The build itself lives in
+# jchevertonwynne/workflows so every app shares one definition rather than a
+# copy that drifts.
 
 on:
   push:
@@ -20,63 +16,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository }}
-
 jobs:
-  build:
-    name: Build and push
-    runs-on: ubuntu-latest
+  image:
+    uses: jchevertonwynne/workflows/.github/workflows/build-image.yml@main
     permissions:
       contents: read
       packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      # The Pi is arm64 and the runner is amd64. The Dockerfile cross-compiles
-      # with Go's own toolchain (GOARCH=$TARGETARCH) rather than emulating the
-      # whole build under QEMU, so this needs buildx for the platform plumbing
-      # but not qemu — a Go cross-compile is far quicker than an emulated one.
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
-          # Three tags, each doing a different job:
-          #
-          #   main                    - for humans doing a quick docker pull
-          #   sha-<full sha>          - immutable, traceable to a commit
-          #   main-<sha>-<timestamp>  - what Flux's ImagePolicy sorts on
-          #
-          # The third exists because image automation has to answer "which of
-          # these tags is newest", and neither of the first two can. A moving
-          # tag has no ordering at all, and sha- tags sort lexically into
-          # nonsense. The trailing timestamp is numerically sortable, and the
-          # sha is kept in the middle so the running tag still names its commit.
-          tags: |
-            type=raw,value=main
-            type=sha,format=long
-            type=raw,value={{branch}}-{{sha}}-{{date 'YYYYMMDDHHmmss'}}
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Image digest
-        run: |
-          echo "Pinned reference for the cluster manifest:"
-          echo "  ${{ env.REGISTRY }}/${{ env.IMAGE }}:sha-${{ github.sha }}"
