@@ -24,6 +24,7 @@ import (
 
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/handlers"
+	"weight-tracker/internal/metrics"
 )
 
 //go:embed templates/*.html
@@ -46,6 +47,7 @@ func main() {
 	srv := handlers.New(sqlDB, templatesFS, staticFS, time.Now)
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
+	mux.Handle("GET /metrics", metrics.Handler())
 
 	journalMode, err := db.JournalMode(sqlDB)
 	if err != nil {
@@ -59,7 +61,7 @@ func main() {
 	}
 
 	log.Printf("weight-tracker listening on %s (db: %s, journal: %s)", *addr, *dbPath, journalMode)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := http.ListenAndServe(*addr, metrics.Instrument(mux)); err != nil {
 		log.Fatal(err)
 	}
 }
