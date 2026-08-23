@@ -9,11 +9,8 @@ LOG_FILE := $(BIN_DIR)/$(BINARY).log
 # alongside ADDR if you bind to something localhost can't reach.
 HEALTH_URL ?= http://localhost$(ADDR)/
 
-PI_HOST ?= jcwpi
-PI_USER ?= jcw
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
-TUNNEL_NAME ?= weight-tracker
 
 .PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy deploy-tunnel help
 
@@ -95,14 +92,6 @@ else
 	GOOS=linux GOARCH=arm GOARM=6 go build -o $(BIN_DIR)/$(BINARY)-armv6 .
 endif
 
-# The transfer goes over a plain `ssh ... 'cat > ...'` rather than scp:
-# modern scp defaults to the SFTP subsystem, which a restricted deploy key's
-# authorized_keys forced-command can't cleanly allowlist (unlike a plain
-# exec command, which SSH_ORIGINAL_COMMAND captures verbatim). This changes
-# nothing for a human's own unrestricted key — it's just a different way to
-# move the same bytes — but it's what lets the CI-only deploy key in the
-# README's "Continuous deployment" section be restricted to exactly this
-# command and the one below, rather than needing full shell access.
 # Retired. weight-tracker runs in the k3s cluster now, reconciled by Flux from the
 # homelab repo, and the weight-tracker.service unit on the Pi is disabled.
 #
@@ -119,15 +108,6 @@ deploy:
 	@echo "with both writing the same data through the same hostPath."
 	@exit 1
 
-# The tunnel UUID is deliberately not in the repo. The Pi already knows it,
-# so read it back here rather than committing it or carrying it as a CI
-# secret. Kept separate from 'deploy' on purpose: the tunnel config changes
-# rarely, and restarting cloudflared on every binary deploy would blip the
-# connection for no reason.
-#
-# CI cannot run this — the deploy key's forced-command wrapper allows only
-# the two commands 'deploy' issues, which keeps a leaked key unable to
-# rewrite what the tunnel exposes. Run it by hand.
 # Retired alongside deploy. The tunnel runs as a pod now, configured by the
 # homelab repo; the host's cloudflared.service is disabled. This recipe
 # would rewrite /etc/cloudflared and restart that unit, putting a second
