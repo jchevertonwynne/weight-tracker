@@ -50,12 +50,21 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
-          # A moving 'main' tag for humans, plus an immutable sha tag that is
-          # what the cluster manifest actually pins. Flux reconciling a moving
-          # tag gives you no way to say which commit is running.
+          # Three tags, each doing a different job:
+          #
+          #   main                    - for humans doing a quick docker pull
+          #   sha-<full sha>          - immutable, traceable to a commit
+          #   main-<sha>-<timestamp>  - what Flux's ImagePolicy sorts on
+          #
+          # The third exists because image automation has to answer "which of
+          # these tags is newest", and neither of the first two can. A moving
+          # tag has no ordering at all, and sha- tags sort lexically into
+          # nonsense. The trailing timestamp is numerically sortable, and the
+          # sha is kept in the middle so the running tag still names its commit.
           tags: |
             type=raw,value=main
             type=sha,format=long
+            type=raw,value={{branch}}-{{sha}}-{{date 'YYYYMMDDHHmmss'}}
 
       - uses: docker/build-push-action@v6
         with:
