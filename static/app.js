@@ -27,9 +27,12 @@ function activateTab(name) {
 tabButtons.forEach((btn) => {
 	btn.addEventListener('click', () => {
 		const name = btn.dataset.tab;
-		// Re-tapping the current tab shouldn't stack up history entries that
-		// the back button then has to walk through one by one.
-		if (tabFromURL() !== name) {
+
+		if (tabFromURL() === name) {
+			window.scrollTo(0, 0);
+		} else {
+			// Re-tapping the current tab shouldn't stack up history entries that
+			// the back button then has to walk through one by one.
 			history.pushState(null, '', '#' + name);
 		}
 		activateTab(name);
