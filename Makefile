@@ -26,8 +26,8 @@ help:
 	@echo "make logs          - tail the daemon's log file"
 	@echo "make build         - build a local binary into $(BIN_DIR)/"
 	@echo "make build-pi      - cross-compile for Raspberry Pi (PI_ARCH=$(PI_ARCH))"
-	@echo "make deploy        - build-pi, then scp + restart the systemd service on PI_HOST=$(PI_HOST)"
-	@echo "make deploy-tunnel - install the cloudflared config + unit on PI_HOST and restart the tunnel"
+	@echo "make deploy        - retired; deployment is Flux reconciling the homelab repo"
+	@echo "make deploy-tunnel - retired; the tunnels run as pods, see the homelab repo"
 	@echo "make clean         - stop the daemon, then remove build output and the local dev database"
 	@echo "make test          - go test ./... with the race detector"
 	@echo "make check         - everything CI runs: gofmt check, vet, tests"
@@ -103,13 +103,21 @@ endif
 # move the same bytes — but it's what lets the CI-only deploy key in the
 # README's "Continuous deployment" section be restricted to exactly this
 # command and the one below, rather than needing full shell access.
-deploy: build-pi
-	ssh $(PI_USER)@$(PI_HOST) 'cat > ~/$(BINARY)-new' < $(BIN_DIR)/$(BINARY)-$(PI_ARCH)
-	ssh $(PI_USER)@$(PI_HOST) '\
-		sudo systemctl stop $(BINARY) 2>/dev/null; \
-		mv ~/$(BINARY)-new ~/$(BINARY)-$(PI_ARCH); \
-		chmod +x ~/$(BINARY)-$(PI_ARCH); \
-		sudo systemctl start $(BINARY)'
+# Retired. weight-tracker runs in the k3s cluster now, reconciled by Flux from the
+# homelab repo, and the weight-tracker.service unit on the Pi is disabled.
+#
+# The old recipe ended with `sudo systemctl start weight-tracker`, and a disabled unit
+# still starts when asked — disable only removes the boot-time symlink. Running
+# it now would put a host process alongside the pod, both writing the same
+# files through the same hostPath. So the target refuses rather than being
+# deleted: someone with it in muscle memory gets an explanation instead of a
+# split-brain.
+deploy:
+	@echo "make deploy is retired - weight-tracker is deployed by Flux from the homelab repo."
+	@echo "Push to main; CI builds the image, and the cluster picks it up."
+	@echo "Running the old recipe would start the disabled host unit alongside the pod,"
+	@echo "with both writing the same data through the same hostPath."
+	@exit 1
 
 # The tunnel UUID is deliberately not in the repo. The Pi already knows it,
 # so read it back here rather than committing it or carrying it as a CI
@@ -120,21 +128,14 @@ deploy: build-pi
 # CI cannot run this — the deploy key's forced-command wrapper allows only
 # the two commands 'deploy' issues, which keeps a leaked key unable to
 # rewrite what the tunnel exposes. Run it by hand.
+# Retired alongside deploy. The tunnel runs as a pod now, configured by the
+# homelab repo; the host's cloudflared.service is disabled. This recipe
+# would rewrite /etc/cloudflared and restart that unit, putting a second
+# connector on the tunnel and leaving host config that nothing reads.
 deploy-tunnel:
-	@uuid=`ssh $(PI_USER)@$(PI_HOST) 'cloudflared tunnel list --name $(TUNNEL_NAME) --output json | jq -r ".[0].id // empty"'`; \
-	if [ -z "$$uuid" ]; then \
-		echo "no tunnel named $(TUNNEL_NAME) on $(PI_HOST) - run 'cloudflared tunnel create $(TUNNEL_NAME)' there first"; \
-		exit 1; \
-	fi; \
-	echo "installing config for tunnel $$uuid"; \
-	sed "s/TUNNEL_UUID/$$uuid/g" deploy/cloudflared-config.yml \
-		| ssh $(PI_USER)@$(PI_HOST) 'cat > /tmp/cloudflared-config.yml \
-			&& cloudflared --config /tmp/cloudflared-config.yml tunnel ingress validate \
-			&& sudo mv /tmp/cloudflared-config.yml /etc/cloudflared/config.yml'
-	ssh $(PI_USER)@$(PI_HOST) 'sudo tee /etc/systemd/system/cloudflared.service >/dev/null' < deploy/cloudflared.service
-	ssh $(PI_USER)@$(PI_HOST) 'sudo systemctl daemon-reload \
-		&& sudo systemctl enable cloudflared \
-		&& sudo systemctl restart cloudflared'
+	@echo "make deploy-tunnel is retired - the tunnel runs as a pod."
+	@echo "Its ingress config lives in the homelab repo under infrastructure/cloudflared."
+	@exit 1
 
 clean: stop
 	rm -rf $(BIN_DIR)
