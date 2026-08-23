@@ -598,3 +598,35 @@ func TestHandleServiceWorker(t *testing.T) {
 		t.Error("service worker does not appear to try the network first")
 	}
 }
+
+func TestHealthz(t *testing.T) {
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.HandleHealthz(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET /healthz = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ok") {
+		t.Errorf("body = %q, want it to say ok", rec.Body.String())
+	}
+}
+
+// The index used to write the template straight to the ResponseWriter, which
+// commits a 200 on the first byte; a template failing halfway then left
+// http.Error setting a 500 on a committed response, and the client kept a
+// truncated 200. Rendering into a buffer first means either the whole page or
+// a clean error, never half of one.
+func TestIndexDoesNotWriteAPartialPage(t *testing.T) {
+	s := newTestServer(t)
+	rec := httptest.NewRecorder()
+	s.HandleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.HasSuffix(strings.TrimSpace(body), "</html>") {
+		t.Errorf("response does not end with </html>; a partial page was sent:\n...%s", body[max(0, len(body)-200):])
+	}
+}

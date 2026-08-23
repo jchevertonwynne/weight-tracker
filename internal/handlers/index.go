@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"weight-tracker/internal/chart"
@@ -60,9 +62,37 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		Overnight:      overnight.BuildSummary(overnightPairs),
 		Pairs:          overnightPairs,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "index", data); err != nil {
+	// Rendered into a buffer rather than straight to w. Writing to the
+	// ResponseWriter commits a 200 with the first byte, so a template that
+	// failed halfway left http.Error trying to set a 500 on an
+	// already-committed response — Go logs that as "superfluous
+	// response.WriteHeader call" and the client keeps the truncated 200.
+	// Buffering means a genuine template error becomes a clean 500 with no
+	// partial page, and the only thing that can fail afterwards is the write
+	// itself, which nothing can be done about but log.
+	//
+	// The page is a few tens of kilobytes, so holding one in memory is
+	// cheaper than the alternative being wrong.
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, "index", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		log.Printf("write index response: %v", err)
+	}
+}
+
+// HandleHealthz is a liveness endpoint for the Kubernetes probes. It exists so
+// they do not have to hit "/", which lists every entry, goal and marker and
+// rebuilds the summary on each call — several times a minute, forever, on a
+// Raspberry Pi. It deliberately does not touch the database: this answers
+// "is the process serving?", and a failing database should surface as a 500
+// on a real request rather than a restart loop.
+func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write([]byte("ok\n"))
 }
 
 // HandleChart returns chart data as JSON for the client-side Chart.js

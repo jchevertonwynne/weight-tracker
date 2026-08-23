@@ -55,6 +55,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /{$}", s.HandleIndex)
 	mux.HandleFunc("GET /chart", s.HandleChart)
 	mux.HandleFunc("GET /summary", s.HandleSummary)
+	mux.HandleFunc("GET /healthz", s.HandleHealthz)
 	mux.HandleFunc("GET /sw.js", s.HandleServiceWorker)
 	mux.HandleFunc("GET /overnight", s.HandleOvernightTab)
 	mux.HandleFunc("GET /overnight/windows", s.HandleOvernightWindows)
