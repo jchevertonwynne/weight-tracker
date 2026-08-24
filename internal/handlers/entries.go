@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -16,43 +15,41 @@ func parseRecordedAt(r *http.Request) (time.Time, error) {
 	return parseDateTimeFields(r, "recorded_at")
 }
 
-// RenderEntriesList re-renders the history list after a create/update/delete
-// and asks the chart controls to refresh themselves too, since a changed
-// entry can affect whatever range/series the user currently has selected.
-func (s *Server) RenderEntriesList(ctx context.Context, w http.ResponseWriter) {
-	entries, err := db.ListEntries(ctx, s.db)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+// entriesWindow reads the period/range/from/until fields shared by the
+// entries-filter form's own GET and by hx-include="#entries-filter" on the
+// create/edit/delete actions, so a mutation's own response can be filtered
+// to the same view the user is looking at instead of falling back to a
+// default range.
+//
+// r.FormValue reads both the URL query and a form-encoded body, which
+// covers every method these routes use: htmx puts included fields in the
+// query string for GET and DELETE (its default methodsThatUseUrlParams),
+// and in the body for POST/PUT — exactly the split Go's FormValue already
+// understands.
+func (s *Server) entriesWindow(r *http.Request) (periodParam string, window timerange.Window) {
+	rangeParam := r.FormValue("range")
+	if rangeParam == "" {
+		rangeParam = "all"
 	}
-	w.Header().Set("HX-Trigger", "entries-changed")
-	data := struct{ Rows []history.Row }{Rows: history.BuildRows(entries)}
-	if err := s.tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	window = timerange.Resolve(rangeParam, r.FormValue("from"), r.FormValue("until"), s.now())
+	return r.FormValue("period"), window
 }
 
-// HandleEntriesList renders the history list filtered by the entries-filter
-// form — period, plus the exact same range/from/until triple the chart's
-// own time-range-picker submits (it's the same shared component), so a
-// preset like range=30 is resolved by timerange.Resolve the same way for
-// both. Registered separately from the CRUD handlers below so a
-// create/update/delete's own response can keep rendering the unfiltered
-// list — the filter form re-applies itself afterward via
-// hx-trigger="... entries-changed from:body", so the visible list ends up
-// filtered either way, just via one extra round-trip.
-func (s *Server) HandleEntriesList(w http.ResponseWriter, r *http.Request) {
+// RenderEntriesList renders the history list filtered to whatever
+// period/range/from/until the request carries, and asks the chart controls
+// to refresh themselves too, since a changed entry can affect whatever
+// range/series the user currently has selected. Used directly as the
+// GET /entries handler, and called by the create/update/delete handlers
+// below so their own response reflects the same filtered view rather than
+// reverting to the default range.
+func (s *Server) RenderEntriesList(w http.ResponseWriter, r *http.Request) {
 	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	periodParam := r.URL.Query().Get("period")
-	rangeParam := r.URL.Query().Get("range")
-	if rangeParam == "" {
-		rangeParam = "all"
-	}
-	window := timerange.Resolve(rangeParam, r.URL.Query().Get("from"), r.URL.Query().Get("until"), s.now())
+	periodParam, window := s.entriesWindow(r)
+	w.Header().Set("HX-Trigger", "entries-changed")
 	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries), periodParam, window)}
 	if err := s.tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -79,7 +76,7 @@ func (s *Server) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderEntriesList(r.Context(), w)
+	s.RenderEntriesList(w, r)
 }
 
 func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +143,7 @@ func (s *Server) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderEntriesList(r.Context(), w)
+	s.RenderEntriesList(w, r)
 }
 
 func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
@@ -159,5 +156,5 @@ func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		writeDeleteError(w, err)
 		return
 	}
-	s.RenderEntriesList(r.Context(), w)
+	s.RenderEntriesList(w, r)
 }

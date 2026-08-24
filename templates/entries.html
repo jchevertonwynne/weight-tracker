@@ -5,7 +5,7 @@
 		hx-get="/entries"
 		hx-target="#entries-list"
 		hx-swap="outerHTML"
-		hx-trigger="change, entries-changed from:body">
+		hx-trigger="change">
 		<div class="chart-controls-row">
 			<label class="field">
 				<span>Period</span>
@@ -49,14 +49,14 @@
 	</div>
 	<div class="entry-actions">
 		<button class="btn-text" hx-get="/entries/{{.ID}}/edit" hx-target="#entry-{{.ID}}" hx-swap="outerHTML">Edit</button>
-		<button class="btn-text btn-danger" hx-delete="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-confirm="Delete this entry?">Delete</button>
+		<button class="btn-text btn-danger" hx-delete="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter" hx-confirm="Delete this entry?">Delete</button>
 	</div>
 </div>
 {{end}}
 
 {{define "row-edit"}}
 <div class="entry-row entry-row-editing" id="entry-{{.ID}}">
-	<form class="edit-form" hx-put="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML">
+	<form class="edit-form" hx-put="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter">
 		{{/* step="any", not "0.1": the value is the stored weight rendered
 		     back to kilograms, which for an imported or unit-converted entry
 		     can carry three decimals (81.647). A 0.1 step would make the
@@ -82,6 +82,7 @@
 		hx-post="/entries"
 		hx-target="#entries-list"
 		hx-swap="outerHTML"
+		hx-include="#entries-filter"
 		hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('log-dialog').close(); }">
 		<label class="field">
 			<span>Weight (kg)</span>

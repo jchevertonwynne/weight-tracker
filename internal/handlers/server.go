@@ -59,7 +59,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sw.js", s.HandleServiceWorker)
 	mux.HandleFunc("GET /overnight", s.HandleOvernightTab)
 	mux.HandleFunc("GET /overnight/windows", s.HandleOvernightWindows)
-	mux.HandleFunc("GET /entries", s.HandleEntriesList)
+	mux.HandleFunc("GET /entries", s.RenderEntriesList)
 	mux.HandleFunc("POST /entries", s.HandleCreate)
 	mux.HandleFunc("GET /entries/{id}", s.HandleCancelEdit)
 	mux.HandleFunc("GET /entries/{id}/edit", s.HandleEdit)

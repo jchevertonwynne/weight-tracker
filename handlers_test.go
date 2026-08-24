@@ -229,6 +229,129 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	}
 }
 
+// Regression: a create/update/delete on the History tab used to render an
+// unfiltered "all time" list, relying on a second, racy round-trip from the
+// entries-filter form to correct it (internal/handlers/entries.go). Now the
+// mutation's own response is filtered to whatever range/from/until/period
+// the request carries, exactly like htmx's hx-include="#entries-filter"
+// sends. Three entries are seeded: one outside the custom range under test,
+// two inside it, so a response that wrongly reverted to "all time" would
+// show the outside one, and a response that dropped the filter entirely
+// would show everything instead of just what's still in range.
+func TestMutationsPreserveTheSelectedDateRange(t *testing.T) {
+	rangeForm := url.Values{"range": {"custom"}, "from": {"2026-08-01"}, "until": {"2026-08-31"}}
+
+	seed := func(t *testing.T, s *testServer) {
+		t.Helper()
+		for _, tc := range []struct{ date, weight string }{
+			{"2026-01-01", "60.0"}, // outside the custom range
+			{"2026-08-05", "70.0"}, // inside; this one gets deleted/updated
+			{"2026-08-10", "75.0"}, // inside; stays put
+		} {
+			form := entryForm(tc.weight)
+			form.Set("recorded_at_date", tc.date)
+			if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
+				t.Fatalf("seed create %s failed: %d", tc.date, rec.Code)
+			}
+		}
+	}
+
+	t.Run("delete", func(t *testing.T) {
+		s := newTestServer(t)
+		seed(t, s)
+		entries, err := db.ListEntries(t.Context(), s.db)
+		if err != nil || len(entries) != 3 {
+			t.Fatalf("expected 3 seeded entries, got %v (err %v)", entries, err)
+		}
+		var deleteID int64
+		for _, e := range entries {
+			if db.GramsToKg(e.WeightG) == 70 {
+				deleteID = e.ID
+			}
+		}
+
+		req := httptest.NewRequest(http.MethodDelete, "/entries/"+strconv.FormatInt(deleteID, 10)+"?"+rangeForm.Encode(), nil)
+		req.SetPathValue("id", strconv.FormatInt(deleteID, 10))
+		rec := httptest.NewRecorder()
+		s.HandleDelete(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delete status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "60.0") {
+			t.Error("response includes the out-of-range entry; the range was not applied")
+		}
+		if strings.Contains(body, "70.0") {
+			t.Error("response includes the just-deleted entry")
+		}
+		if !strings.Contains(body, "75.0") {
+			t.Error("response is missing the remaining in-range entry")
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		s := newTestServer(t)
+		seed(t, s)
+		entries, err := db.ListEntries(t.Context(), s.db)
+		if err != nil || len(entries) != 3 {
+			t.Fatalf("expected 3 seeded entries, got %v (err %v)", entries, err)
+		}
+		var updateID int64
+		for _, e := range entries {
+			if db.GramsToKg(e.WeightG) == 70 {
+				updateID = e.ID
+			}
+		}
+
+		form := url.Values{
+			"weight_kg":        {"71.0"},
+			"recorded_at_date": {"2026-08-05"},
+			"recorded_at_time": {"07:30"},
+			"period_override":  {""},
+			"range":            rangeForm["range"],
+			"from":             rangeForm["from"],
+			"until":            rangeForm["until"],
+		}
+		req := httptest.NewRequest(http.MethodPut, "/entries/"+strconv.FormatInt(updateID, 10), strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("id", strconv.FormatInt(updateID, 10))
+		rec := httptest.NewRecorder()
+		s.HandleUpdate(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "60.0") {
+			t.Error("response includes the out-of-range entry; the range was not applied")
+		}
+		if !strings.Contains(body, "71.0") {
+			t.Error("response is missing the updated entry")
+		}
+	})
+
+	t.Run("create", func(t *testing.T) {
+		s := newTestServer(t)
+		seed(t, s)
+
+		form := entryForm("80.0")
+		form.Set("recorded_at_date", "2026-08-15")
+		form["range"] = rangeForm["range"]
+		form["from"] = rangeForm["from"]
+		form["until"] = rangeForm["until"]
+		rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create status = %d, want 200", rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "60.0") {
+			t.Error("response includes the out-of-range entry; the range was not applied")
+		}
+		if !strings.Contains(body, "80.0") {
+			t.Error("response is missing the newly created entry")
+		}
+	})
+}
+
 func TestDeleteRejectsNonNumericID(t *testing.T) {
 	s := newTestServer(t)
 	rec := deleteRequest(t, s.HandleDelete, "/entries/abc", "abc")
