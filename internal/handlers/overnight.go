@@ -13,7 +13,7 @@ import (
 // fragment, filtered by the same range/from/until triple the chart and
 // History filter submit via the shared time-range-picker.
 func (s *Server) HandleOvernightTab(w http.ResponseWriter, r *http.Request) {
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -45,12 +45,12 @@ func (s *Server) HandleOvernightTab(w http.ResponseWriter, r *http.Request) {
 // JSON, mirroring HandleChart's split: no server-side pixel math, the
 // client-side Chart.js instance handles that.
 func (s *Server) HandleOvernightWindows(w http.ResponseWriter, r *http.Request) {
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	goalList, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

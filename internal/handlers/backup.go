@@ -37,7 +37,7 @@ func (s *Server) HandleBackup(w http.ResponseWriter, r *http.Request) {
 	// VACUUM INTO refuses to write to a path that already exists, and
 	// MkdirTemp has just given us an empty directory of our own.
 	snapshot := filepath.Join(dir, "snapshot.db")
-	if err := db.BackupTo(s.db, snapshot); err != nil {
+	if err := db.BackupTo(r.Context(), s.db, snapshot); err != nil {
 		http.Error(w, "could not create the snapshot: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

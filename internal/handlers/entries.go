@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -18,8 +19,8 @@ func parseRecordedAt(r *http.Request) (time.Time, error) {
 // RenderEntriesList re-renders the history list after a create/update/delete
 // and asks the chart controls to refresh themselves too, since a changed
 // entry can affect whatever range/series the user currently has selected.
-func (s *Server) RenderEntriesList(w http.ResponseWriter) {
-	entries, err := db.ListEntries(s.db)
+func (s *Server) RenderEntriesList(ctx context.Context, w http.ResponseWriter) {
+	entries, err := db.ListEntries(ctx, s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -41,7 +42,7 @@ func (s *Server) RenderEntriesList(w http.ResponseWriter) {
 // hx-trigger="... entries-changed from:body", so the visible list ends up
 // filtered either way, just via one extra round-trip.
 func (s *Server) HandleEntriesList(w http.ResponseWriter, r *http.Request) {
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -74,11 +75,11 @@ func (s *Server) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid period_override", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateEntry(s.db, recordedAt, weightG, periodOverride, s.now()); err != nil {
+	if _, err := db.CreateEntry(r.Context(), s.db, recordedAt, weightG, periodOverride, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderEntriesList(w)
+	s.RenderEntriesList(r.Context(), w)
 }
 
 func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +88,7 @@ func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	entry, err := db.GetEntry(s.db, id)
+	entry, err := db.GetEntry(r.Context(), s.db, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -104,7 +105,7 @@ func (s *Server) HandleCancelEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -141,11 +142,11 @@ func (s *Server) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid period_override", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateEntry(s.db, id, recordedAt, weightG, periodOverride); err != nil {
+	if err := db.UpdateEntry(r.Context(), s.db, id, recordedAt, weightG, periodOverride); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderEntriesList(w)
+	s.RenderEntriesList(r.Context(), w)
 }
 
 func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
@@ -154,9 +155,9 @@ func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := db.DeleteEntry(s.db, id); err != nil {
+	if err := db.DeleteEntry(r.Context(), s.db, id); err != nil {
 		writeDeleteError(w, err)
 		return
 	}
-	s.RenderEntriesList(w)
+	s.RenderEntriesList(r.Context(), w)
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"weight-tracker/internal/db"
@@ -10,8 +11,8 @@ import (
 // RenderGoalsList re-renders the goals-list card and fires goals-changed so
 // the chart controls (which also affect the plotted goal reference lines)
 // refresh themselves too.
-func (s *Server) RenderGoalsList(w http.ResponseWriter) {
-	goalList, err := db.ListGoals(s.db)
+func (s *Server) RenderGoalsList(ctx context.Context, w http.ResponseWriter) {
+	goalList, err := db.ListGoals(ctx, s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -34,11 +35,11 @@ func (s *Server) HandleGoalCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateGoal(s.db, weightG, effectiveFrom, s.now()); err != nil {
+	if _, err := db.CreateGoal(r.Context(), s.db, weightG, effectiveFrom, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderGoalsList(w)
+	s.RenderGoalsList(r.Context(), w)
 }
 
 func (s *Server) HandleGoalEdit(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func (s *Server) HandleGoalEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	goal, err := db.GetGoal(s.db, id)
+	goal, err := db.GetGoal(r.Context(), s.db, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -64,7 +65,7 @@ func (s *Server) HandleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	goalList, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -96,11 +97,11 @@ func (s *Server) HandleGoalUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid effective_from", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateGoal(s.db, id, weightG, effectiveFrom); err != nil {
+	if err := db.UpdateGoal(r.Context(), s.db, id, weightG, effectiveFrom); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderGoalsList(w)
+	s.RenderGoalsList(r.Context(), w)
 }
 
 func (s *Server) HandleGoalDelete(w http.ResponseWriter, r *http.Request) {
@@ -109,9 +110,9 @@ func (s *Server) HandleGoalDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := db.DeleteGoal(s.db, id); err != nil {
+	if err := db.DeleteGoal(r.Context(), s.db, id); err != nil {
 		writeDeleteError(w, err)
 		return
 	}
-	s.RenderGoalsList(w)
+	s.RenderGoalsList(r.Context(), w)
 }

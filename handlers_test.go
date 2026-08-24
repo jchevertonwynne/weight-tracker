@@ -20,7 +20,7 @@ import (
 
 // testServer bundles a *handlers.Server with the raw *sql.DB it was built
 // from, so tests can both drive HTTP handlers (via the embedded Server)
-// and assert on stored state directly (via db.ListEntries(s.db) etc.) —
+// and assert on stored state directly (via db.ListEntries(t.Context(), s.db) etc.) —
 // handlers.Server's own db field is private to its package.
 type testServer struct {
 	*handlers.Server
@@ -85,7 +85,7 @@ func TestHandleCreateRejectsInvalidWeights(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
-			entries, err := db.ListEntries(s.db)
+			entries, err := db.ListEntries(t.Context(), s.db)
 			if err != nil {
 				t.Fatalf("list entries: %v", err)
 			}
@@ -104,7 +104,7 @@ func TestHandleCreateAcceptsValidWeights(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
 			}
-			entries, err := db.ListEntries(s.db)
+			entries, err := db.ListEntries(t.Context(), s.db)
 			if err != nil {
 				t.Fatalf("list entries: %v", err)
 			}
@@ -144,7 +144,7 @@ func TestHandleGoalCreateRejectsInvalidWeights(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
-			goals, err := db.ListGoals(s.db)
+			goals, err := db.ListGoals(t.Context(), s.db)
 			if err != nil {
 				t.Fatalf("list goals: %v", err)
 			}
@@ -204,7 +204,7 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create failed: %d", rec.Code)
 	}
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(t.Context(), s.db)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("expected one entry, got %v (err %v)", entries, err)
 	}
@@ -214,7 +214,7 @@ func TestDeleteExistingEntryReturns200AndRemovesIt(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	remaining, err := db.ListEntries(s.db)
+	remaining, err := db.ListEntries(t.Context(), s.db)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestHandleImportAcceptsEveryUnitTheFormOffers(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
 			}
-			entries, err := db.ListEntries(s.db)
+			entries, err := db.ListEntries(t.Context(), s.db)
 			if err != nil {
 				t.Fatalf("list entries: %v", err)
 			}
@@ -316,7 +316,7 @@ func TestHandleImportIsIdempotent(t *testing.T) {
 			t.Fatalf("import %d: status = %d", i+1, rec.Code)
 		}
 	}
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(t.Context(), s.db)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -362,11 +362,11 @@ func TestHandleExportRoundTripsThroughImport(t *testing.T) {
 	if importRec.Code != http.StatusOK {
 		t.Fatalf("re-import status = %d (body: %s)", importRec.Code, importRec.Body)
 	}
-	reimported, err := db.ListEntries(fresh.db)
+	reimported, err := db.ListEntries(t.Context(), fresh.db)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
-	original, err := db.ListEntries(s.db)
+	original, err := db.ListEntries(t.Context(), s.db)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -439,9 +439,9 @@ func TestHandleDeleteAllClearsEverything(t *testing.T) {
 		t.Errorf("status = %d, want 303", rec.Code)
 	}
 
-	entries, _ := db.ListEntries(s.db)
-	goals, _ := db.ListGoals(s.db)
-	markers, _ := db.ListMarkers(s.db)
+	entries, _ := db.ListEntries(t.Context(), s.db)
+	goals, _ := db.ListGoals(t.Context(), s.db)
+	markers, _ := db.ListMarkers(t.Context(), s.db)
 	if len(entries) != 0 || len(goals) != 0 || len(markers) != 0 {
 		t.Errorf("after delete-all: %d entries, %d goals, %d markers; want none", len(entries), len(goals), len(markers))
 	}
@@ -491,14 +491,14 @@ func TestHandleBackupServesARestorableDatabase(t *testing.T) {
 	}
 	defer restored.Close()
 
-	entries, err := db.ListEntries(restored)
+	entries, err := db.ListEntries(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
 	if len(entries) != 1 || entries[0].WeightG != 82400 {
 		t.Errorf("restored entries = %+v, want one 82400 g entry", entries)
 	}
-	markers, err := db.ListMarkers(restored)
+	markers, err := db.ListMarkers(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list markers: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestHandleBackupDoesNotDisturbTheLiveDatabase(t *testing.T) {
 	if rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", form); rec.Code != http.StatusOK {
 		t.Errorf("create after backup failed: %d", rec.Code)
 	}
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(t.Context(), s.db)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

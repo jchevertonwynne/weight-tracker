@@ -7,8 +7,8 @@ import (
 	"weight-tracker/internal/summary"
 )
 
-func (s *Server) HandleSummary(w http.ResponseWriter, _ *http.Request) {
-	entries, err := db.ListEntries(s.db)
+func (s *Server) HandleSummary(w http.ResponseWriter, r *http.Request) {
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

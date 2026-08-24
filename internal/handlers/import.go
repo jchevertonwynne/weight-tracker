@@ -36,7 +36,7 @@ func (s *Server) HandleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := db.ExistingRecordedAtSet(s.db)
+	existing, err := db.ExistingRecordedAtSet(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -47,7 +47,7 @@ func (s *Server) HandleImport(w http.ResponseWriter, r *http.Request) {
 		newEntries[i] = db.NewEntry{RecordedAt: row.RecordedAt, WeightG: row.WeightG}
 	}
 
-	inserted, err := db.BulkCreateEntries(s.db, newEntries, existing, s.now())
+	inserted, err := db.BulkCreateEntries(r.Context(), s.db, newEntries, existing, s.now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

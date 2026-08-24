@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -10,8 +11,8 @@ import (
 
 // RenderMarkersList re-renders the markers-list card and fires
 // markers-changed so the chart controls refresh themselves too.
-func (s *Server) RenderMarkersList(w http.ResponseWriter) {
-	markerList, err := db.ListMarkers(s.db)
+func (s *Server) RenderMarkersList(ctx context.Context, w http.ResponseWriter) {
+	markerList, err := db.ListMarkers(ctx, s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -34,11 +35,11 @@ func (s *Server) HandleMarkerCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "note is required", http.StatusBadRequest)
 		return
 	}
-	if _, err := db.CreateMarker(s.db, date, note, s.now()); err != nil {
+	if _, err := db.CreateMarker(r.Context(), s.db, date, note, s.now()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderMarkersList(w)
+	s.RenderMarkersList(r.Context(), w)
 }
 
 func (s *Server) HandleMarkerEdit(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func (s *Server) HandleMarkerEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	marker, err := db.GetMarker(s.db, id)
+	marker, err := db.GetMarker(r.Context(), s.db, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -64,7 +65,7 @@ func (s *Server) HandleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	markerList, err := db.ListMarkers(s.db)
+	markerList, err := db.ListMarkers(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -96,11 +97,11 @@ func (s *Server) HandleMarkerUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "note is required", http.StatusBadRequest)
 		return
 	}
-	if err := db.UpdateMarker(s.db, id, date, note); err != nil {
+	if err := db.UpdateMarker(r.Context(), s.db, id, date, note); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.RenderMarkersList(w)
+	s.RenderMarkersList(r.Context(), w)
 }
 
 func (s *Server) HandleMarkerDelete(w http.ResponseWriter, r *http.Request) {
@@ -109,9 +110,9 @@ func (s *Server) HandleMarkerDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := db.DeleteMarker(s.db, id); err != nil {
+	if err := db.DeleteMarker(r.Context(), s.db, id); err != nil {
 		writeDeleteError(w, err)
 		return
 	}
-	s.RenderMarkersList(w)
+	s.RenderMarkersList(r.Context(), w)
 }

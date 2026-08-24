@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -57,7 +58,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
-	if _, err := CreateEntry(first, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), first, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
 		t.Fatalf("create entry: %v", err)
 	}
 	first.Close()
@@ -68,7 +69,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	defer second.Close()
-	entries, err := ListEntries(second)
+	entries, err := ListEntries(t.Context(), second)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -81,12 +82,12 @@ func TestEntryRoundTrip(t *testing.T) {
 	sqlDB := openTest(t)
 	recordedAt := at(t, "2026-08-16 07:30")
 
-	id, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now())
+	id, err := CreateEntry(t.Context(), sqlDB, recordedAt, 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	got, err := GetEntry(sqlDB, id)
+	got, err := GetEntry(t.Context(), sqlDB, id)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -102,10 +103,10 @@ func TestEntryRoundTrip(t *testing.T) {
 		t.Errorf("PeriodOverride = %q, want empty (stored as NULL)", got.PeriodOverride)
 	}
 
-	if err := UpdateEntry(sqlDB, id, recordedAt.Add(time.Hour), 81900, "evening"); err != nil {
+	if err := UpdateEntry(t.Context(), sqlDB, id, recordedAt.Add(time.Hour), 81900, "evening"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got, err = GetEntry(sqlDB, id)
+	got, err = GetEntry(t.Context(), sqlDB, id)
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
@@ -113,10 +114,10 @@ func TestEntryRoundTrip(t *testing.T) {
 		t.Errorf("after update: %v g, override %q; want 81900 / evening", got.WeightG, got.PeriodOverride)
 	}
 
-	if err := DeleteEntry(sqlDB, id); err != nil {
+	if err := DeleteEntry(t.Context(), sqlDB, id); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := GetEntry(sqlDB, id); err == nil {
+	if _, err := GetEntry(t.Context(), sqlDB, id); err == nil {
 		t.Error("get after delete returned no error, want one")
 	}
 }
@@ -124,11 +125,11 @@ func TestEntryRoundTrip(t *testing.T) {
 func TestListEntriesIsNewestFirst(t *testing.T) {
 	sqlDB := openTest(t)
 	for _, ts := range []string{"2026-08-14 07:00", "2026-08-16 07:00", "2026-08-15 07:00"} {
-		if _, err := CreateEntry(sqlDB, at(t, ts), 82, "", time.Now()); err != nil {
+		if _, err := CreateEntry(t.Context(), sqlDB, at(t, ts), 82, "", time.Now()); err != nil {
 			t.Fatalf("create %s: %v", ts, err)
 		}
 	}
-	entries, err := ListEntries(sqlDB)
+	entries, err := ListEntries(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -143,7 +144,7 @@ func TestListEntriesIsNewestFirst(t *testing.T) {
 }
 
 func TestListEntriesOnEmptyDatabase(t *testing.T) {
-	entries, err := ListEntries(openTest(t))
+	entries, err := ListEntries(t.Context(), openTest(t))
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -156,11 +157,11 @@ func TestGoalRoundTrip(t *testing.T) {
 	sqlDB := openTest(t)
 	effectiveFrom := at(t, "2026-08-01 00:00")
 
-	id, err := CreateGoal(sqlDB, 78000, effectiveFrom, time.Now())
+	id, err := CreateGoal(t.Context(), sqlDB, 78000, effectiveFrom, time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, err := GetGoal(sqlDB, id)
+	got, err := GetGoal(t.Context(), sqlDB, id)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -168,13 +169,13 @@ func TestGoalRoundTrip(t *testing.T) {
 		t.Errorf("got %v g from %v, want 78000 from %v", got.WeightG, got.EffectiveFrom, effectiveFrom)
 	}
 
-	if err := UpdateGoal(sqlDB, id, 76000, effectiveFrom); err != nil {
+	if err := UpdateGoal(t.Context(), sqlDB, id, 76000, effectiveFrom); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if got, _ = GetGoal(sqlDB, id); got.WeightG != 76000 {
+	if got, _ = GetGoal(t.Context(), sqlDB, id); got.WeightG != 76000 {
 		t.Errorf("after update: %v g, want 76000", got.WeightG)
 	}
-	if err := DeleteGoal(sqlDB, id); err != nil {
+	if err := DeleteGoal(t.Context(), sqlDB, id); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 }
@@ -183,11 +184,11 @@ func TestMarkerRoundTrip(t *testing.T) {
 	sqlDB := openTest(t)
 	date := at(t, "2026-08-10 00:00")
 
-	id, err := CreateMarker(sqlDB, date, "started cutting", time.Now())
+	id, err := CreateMarker(t.Context(), sqlDB, date, "started cutting", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, err := GetMarker(sqlDB, id)
+	got, err := GetMarker(t.Context(), sqlDB, id)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -195,13 +196,13 @@ func TestMarkerRoundTrip(t *testing.T) {
 		t.Errorf("got %q on %v, want %q on %v", got.Note, got.Date, "started cutting", date)
 	}
 
-	if err := UpdateMarker(sqlDB, id, date, "ended cutting"); err != nil {
+	if err := UpdateMarker(t.Context(), sqlDB, id, date, "ended cutting"); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if got, _ = GetMarker(sqlDB, id); got.Note != "ended cutting" {
+	if got, _ = GetMarker(t.Context(), sqlDB, id); got.Note != "ended cutting" {
 		t.Errorf("after update: %q", got.Note)
 	}
-	if err := DeleteMarker(sqlDB, id); err != nil {
+	if err := DeleteMarker(t.Context(), sqlDB, id); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 }
@@ -210,7 +211,7 @@ func TestDeleteMissingRowReportsNotFound(t *testing.T) {
 	sqlDB := openTest(t)
 	tests := []struct {
 		name   string
-		delete func(*sql.DB, int64) error
+		delete func(context.Context, *sql.DB, int64) error
 	}{
 		{"entry", DeleteEntry},
 		{"goal", DeleteGoal},
@@ -218,7 +219,7 @@ func TestDeleteMissingRowReportsNotFound(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.delete(sqlDB, 999)
+			err := tc.delete(t.Context(), sqlDB, 999)
 			if !errors.Is(err, ErrNotFound) {
 				t.Errorf("err = %v, want ErrNotFound", err)
 			}
@@ -228,14 +229,14 @@ func TestDeleteMissingRowReportsNotFound(t *testing.T) {
 
 func TestDeleteTwiceReportsNotFoundTheSecondTime(t *testing.T) {
 	sqlDB := openTest(t)
-	id, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now())
+	id, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := DeleteEntry(sqlDB, id); err != nil {
+	if err := DeleteEntry(t.Context(), sqlDB, id); err != nil {
 		t.Fatalf("first delete: %v", err)
 	}
-	if err := DeleteEntry(sqlDB, id); !errors.Is(err, ErrNotFound) {
+	if err := DeleteEntry(t.Context(), sqlDB, id); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second delete err = %v, want ErrNotFound", err)
 	}
 }
@@ -243,10 +244,10 @@ func TestDeleteTwiceReportsNotFoundTheSecondTime(t *testing.T) {
 func TestExistingRecordedAtSet(t *testing.T) {
 	sqlDB := openTest(t)
 	recordedAt := at(t, "2026-08-16 07:30")
-	if _, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, recordedAt, 82400, "", time.Now()); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	set, err := ExistingRecordedAtSet(sqlDB)
+	set, err := ExistingRecordedAtSet(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestBulkCreateEntries(t *testing.T) {
 			{RecordedAt: at(t, "2026-08-14 07:00"), WeightG: 84000},
 			{RecordedAt: at(t, "2026-08-15 07:00"), WeightG: 83000},
 		}
-		inserted, err := BulkCreateEntries(sqlDB, rows, map[string]struct{}{}, time.Now())
+		inserted, err := BulkCreateEntries(t.Context(), sqlDB, rows, map[string]struct{}{}, time.Now())
 		if err != nil {
 			t.Fatalf("bulk create: %v", err)
 		}
@@ -275,10 +276,10 @@ func TestBulkCreateEntries(t *testing.T) {
 	t.Run("skips rows already in the database", func(t *testing.T) {
 		sqlDB := openTest(t)
 		existingAt := at(t, "2026-08-14 07:00")
-		if _, err := CreateEntry(sqlDB, existingAt, 84000, "", time.Now()); err != nil {
+		if _, err := CreateEntry(t.Context(), sqlDB, existingAt, 84000, "", time.Now()); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		existing, err := ExistingRecordedAtSet(sqlDB)
+		existing, err := ExistingRecordedAtSet(t.Context(), sqlDB)
 		if err != nil {
 			t.Fatalf("set: %v", err)
 		}
@@ -286,14 +287,14 @@ func TestBulkCreateEntries(t *testing.T) {
 			{RecordedAt: existingAt, WeightG: 84000},
 			{RecordedAt: at(t, "2026-08-15 07:00"), WeightG: 83000},
 		}
-		inserted, err := BulkCreateEntries(sqlDB, rows, existing, time.Now())
+		inserted, err := BulkCreateEntries(t.Context(), sqlDB, rows, existing, time.Now())
 		if err != nil {
 			t.Fatalf("bulk create: %v", err)
 		}
 		if inserted != 1 {
 			t.Errorf("inserted %d, want 1 (the duplicate should be skipped)", inserted)
 		}
-		entries, _ := ListEntries(sqlDB)
+		entries, _ := ListEntries(t.Context(), sqlDB)
 		if len(entries) != 2 {
 			t.Errorf("database holds %d entries, want 2", len(entries))
 		}
@@ -306,7 +307,7 @@ func TestBulkCreateEntries(t *testing.T) {
 			{RecordedAt: sameTime, WeightG: 84000},
 			{RecordedAt: sameTime, WeightG: 84500},
 		}
-		inserted, err := BulkCreateEntries(sqlDB, rows, map[string]struct{}{}, time.Now())
+		inserted, err := BulkCreateEntries(t.Context(), sqlDB, rows, map[string]struct{}{}, time.Now())
 		if err != nil {
 			t.Fatalf("bulk create: %v", err)
 		}
@@ -317,7 +318,7 @@ func TestBulkCreateEntries(t *testing.T) {
 
 	t.Run("an empty batch is a no-op", func(t *testing.T) {
 		sqlDB := openTest(t)
-		inserted, err := BulkCreateEntries(sqlDB, nil, map[string]struct{}{}, time.Now())
+		inserted, err := BulkCreateEntries(t.Context(), sqlDB, nil, map[string]struct{}{}, time.Now())
 		if err != nil {
 			t.Fatalf("bulk create: %v", err)
 		}
@@ -329,28 +330,28 @@ func TestBulkCreateEntries(t *testing.T) {
 
 func TestDeleteAllData(t *testing.T) {
 	sqlDB := openTest(t)
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
 		t.Fatalf("create entry: %v", err)
 	}
-	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
+	if _, err := CreateGoal(t.Context(), sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
-	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "note", time.Now()); err != nil {
+	if _, err := CreateMarker(t.Context(), sqlDB, at(t, "2026-08-10 00:00"), "note", time.Now()); err != nil {
 		t.Fatalf("create marker: %v", err)
 	}
 
-	if err := DeleteAllData(sqlDB); err != nil {
+	if err := DeleteAllData(t.Context(), sqlDB); err != nil {
 		t.Fatalf("delete all: %v", err)
 	}
-	entries, _ := ListEntries(sqlDB)
-	goals, _ := ListGoals(sqlDB)
-	markers, _ := ListMarkers(sqlDB)
+	entries, _ := ListEntries(t.Context(), sqlDB)
+	goals, _ := ListGoals(t.Context(), sqlDB)
+	markers, _ := ListMarkers(t.Context(), sqlDB)
 	if len(entries) != 0 || len(goals) != 0 || len(markers) != 0 {
 		t.Errorf("after delete-all: %d/%d/%d entries/goals/markers, want none", len(entries), len(goals), len(markers))
 	}
 
 	// The tables must still be usable afterwards.
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
 		t.Errorf("create after delete-all: %v", err)
 	}
 }
@@ -386,7 +387,7 @@ func TestMigrationAddsPeriodOverrideColumn(t *testing.T) {
 	}
 	defer migrated.Close()
 
-	entries, err := ListEntries(migrated)
+	entries, err := ListEntries(t.Context(), migrated)
 	if err != nil {
 		t.Fatalf("list after migration: %v", err)
 	}
@@ -401,10 +402,10 @@ func TestMigrationAddsPeriodOverrideColumn(t *testing.T) {
 	}
 
 	// The new column must be writable on the migrated table.
-	if err := UpdateEntry(migrated, entries[0].ID, entries[0].RecordedAt, 82400, "evening"); err != nil {
+	if err := UpdateEntry(t.Context(), migrated, entries[0].ID, entries[0].RecordedAt, 82400, "evening"); err != nil {
 		t.Fatalf("update with an override after migration: %v", err)
 	}
-	updated, err := GetEntry(migrated, entries[0].ID)
+	updated, err := GetEntry(t.Context(), migrated, entries[0].ID)
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
 	}
@@ -431,11 +432,11 @@ func TestStoredTimestampsSurviveATimezoneRoundTrip(t *testing.T) {
 	// A time deliberately near midnight, where a mishandled zone conversion
 	// would shift the calendar date and change the detected period.
 	recordedAt := at(t, "2026-08-16 00:30")
-	id, err := CreateEntry(sqlDB, recordedAt, 82400, "", time.Now())
+	id, err := CreateEntry(t.Context(), sqlDB, recordedAt, 82400, "", time.Now())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, err := GetEntry(sqlDB, id)
+	got, err := GetEntry(t.Context(), sqlDB, id)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -550,7 +551,7 @@ func TestMigrationConvertsKilogramsToGrams(t *testing.T) {
 	}
 	defer sqlDB.Close()
 
-	entries, err := ListEntries(sqlDB)
+	entries, err := ListEntries(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -588,7 +589,7 @@ func TestMigrationConvertsKilogramsToGrams(t *testing.T) {
 		t.Errorf("entry 1 recorded_at = %v, want %v", byID[1].RecordedAt, wantRecordedAt)
 	}
 
-	goals, err := ListGoals(sqlDB)
+	goals, err := ListGoals(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("list goals: %v", err)
 	}
@@ -617,7 +618,7 @@ func TestMigrationPreservesAutoincrementAfterRebuild(t *testing.T) {
 
 	// Ids were copied explicitly, so the next insert must not collide with
 	// an existing row.
-	id, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:00"), 81000, "", time.Now())
+	id, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:00"), 81000, "", time.Now())
 	if err != nil {
 		t.Fatalf("create after migration: %v", err)
 	}
@@ -653,7 +654,7 @@ func TestMigrationIsIdempotentAcrossReopens(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open %d: %v", i+1, err)
 		}
-		entries, err := ListEntries(sqlDB)
+		entries, err := ListEntries(t.Context(), sqlDB)
 		if err != nil {
 			t.Fatalf("list entries on open %d: %v", i+1, err)
 		}
@@ -697,7 +698,7 @@ func TestMigrationFromTheOldestSchema(t *testing.T) {
 	}
 	defer sqlDB.Close()
 
-	entries, err := ListEntries(sqlDB)
+	entries, err := ListEntries(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
@@ -711,7 +712,7 @@ func TestMigrationFromTheOldestSchema(t *testing.T) {
 		t.Errorf("PeriodOverride = %q, want empty", entries[0].PeriodOverride)
 	}
 	// Both new columns must be writable on the doubly-migrated table.
-	if err := UpdateEntry(sqlDB, entries[0].ID, entries[0].RecordedAt, 81500, "evening"); err != nil {
+	if err := UpdateEntry(t.Context(), sqlDB, entries[0].ID, entries[0].RecordedAt, 81500, "evening"); err != nil {
 		t.Fatalf("update after migration: %v", err)
 	}
 }
@@ -764,18 +765,18 @@ func TestBusyTimeoutIsSet(t *testing.T) {
 
 func TestBackupToProducesARestorableCopy(t *testing.T) {
 	sqlDB := openTest(t)
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "evening", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:30"), 82400, "evening", time.Now()); err != nil {
 		t.Fatalf("create entry: %v", err)
 	}
-	if _, err := CreateGoal(sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
+	if _, err := CreateGoal(t.Context(), sqlDB, 78000, at(t, "2026-08-01 00:00"), time.Now()); err != nil {
 		t.Fatalf("create goal: %v", err)
 	}
-	if _, err := CreateMarker(sqlDB, at(t, "2026-08-10 00:00"), "started cutting", time.Now()); err != nil {
+	if _, err := CreateMarker(t.Context(), sqlDB, at(t, "2026-08-10 00:00"), "started cutting", time.Now()); err != nil {
 		t.Fatalf("create marker: %v", err)
 	}
 
 	backupPath := filepath.Join(t.TempDir(), "backup.db")
-	if err := BackupTo(sqlDB, backupPath); err != nil {
+	if err := BackupTo(t.Context(), sqlDB, backupPath); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 
@@ -791,7 +792,7 @@ func TestBackupToProducesARestorableCopy(t *testing.T) {
 	}
 	defer restored.Close()
 
-	entries, err := ListEntries(restored)
+	entries, err := ListEntries(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list entries from backup: %v", err)
 	}
@@ -805,14 +806,14 @@ func TestBackupToProducesARestorableCopy(t *testing.T) {
 	if entries[0].PeriodOverride != "evening" {
 		t.Errorf("backup lost the period override: %q", entries[0].PeriodOverride)
 	}
-	goals, err := ListGoals(restored)
+	goals, err := ListGoals(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list goals from backup: %v", err)
 	}
 	if len(goals) != 1 || goals[0].WeightG != 78000 {
 		t.Errorf("backup goals = %+v, want one 78000 g goal", goals)
 	}
-	markers, err := ListMarkers(restored)
+	markers, err := ListMarkers(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list markers from backup: %v", err)
 	}
@@ -826,12 +827,12 @@ func TestBackupCapturesWritesMadeAfterOpen(t *testing.T) {
 	// so a naive file copy could miss it. VACUUM INTO must not.
 	sqlDB := openTest(t)
 	for i := range 5 {
-		if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30").AddDate(0, 0, i), 82000, "", time.Now()); err != nil {
+		if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:30").AddDate(0, 0, i), 82000, "", time.Now()); err != nil {
 			t.Fatalf("create entry %d: %v", i, err)
 		}
 	}
 	backupPath := filepath.Join(t.TempDir(), "backup.db")
-	if err := BackupTo(sqlDB, backupPath); err != nil {
+	if err := BackupTo(t.Context(), sqlDB, backupPath); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	restored, err := Open(backupPath)
@@ -839,7 +840,7 @@ func TestBackupCapturesWritesMadeAfterOpen(t *testing.T) {
 		t.Fatalf("open backup: %v", err)
 	}
 	defer restored.Close()
-	entries, err := ListEntries(restored)
+	entries, err := ListEntries(t.Context(), restored)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -854,7 +855,7 @@ func TestBackupRefusesToOverwrite(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not a database"), 0o644); err != nil {
 		t.Fatalf("seed file: %v", err)
 	}
-	if err := BackupTo(sqlDB, path); err == nil {
+	if err := BackupTo(t.Context(), sqlDB, path); err == nil {
 		t.Error("BackupTo overwrote an existing file, want an error")
 	}
 	// The original file must be untouched.
@@ -869,17 +870,17 @@ func TestBackupRefusesToOverwrite(t *testing.T) {
 
 func TestBackupLeavesTheSourceUsable(t *testing.T) {
 	sqlDB := openTest(t)
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-16 07:30"), 82400, "", time.Now()); err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := BackupTo(sqlDB, filepath.Join(t.TempDir(), "backup.db")); err != nil {
+	if err := BackupTo(t.Context(), sqlDB, filepath.Join(t.TempDir(), "backup.db")); err != nil {
 		t.Fatalf("backup: %v", err)
 	}
 	// VACUUM must not have left the connection in a broken state.
-	if _, err := CreateEntry(sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
+	if _, err := CreateEntry(t.Context(), sqlDB, at(t, "2026-08-17 07:30"), 82000, "", time.Now()); err != nil {
 		t.Errorf("write after backup: %v", err)
 	}
-	entries, err := ListEntries(sqlDB)
+	entries, err := ListEntries(t.Context(), sqlDB)
 	if err != nil {
 		t.Fatalf("list after backup: %v", err)
 	}

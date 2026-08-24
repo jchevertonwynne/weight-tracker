@@ -17,17 +17,17 @@ import (
 )
 
 func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	goalList, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	markerList, err := db.ListMarkers(s.db)
+	markerList, err := db.ListMarkers(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,17 +108,17 @@ func (s *Server) HandleChart(w http.ResponseWriter, r *http.Request) {
 	}
 	fromParam := r.URL.Query().Get("from")
 	untilParam := r.URL.Query().Get("until")
-	entries, err := db.ListEntries(s.db)
+	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	goalList, err := db.ListGoals(s.db)
+	goalList, err := db.ListGoals(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	markerList, err := db.ListMarkers(s.db)
+	markerList, err := db.ListMarkers(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

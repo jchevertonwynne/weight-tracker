@@ -7,6 +7,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -25,21 +26,23 @@ var ErrNotFound = errors.New("not found")
 // deleteByID runs a single-row delete and reports ErrNotFound when the
 // statement matched nothing. Shared by entries, goals, and markers, whose
 // delete paths are otherwise identical apart from the table name.
-func deleteByID(sqlDB *sql.DB, table string, id int64) error {
-	// table is never user input — every caller passes a literal — so
-	// interpolating it is safe; SQLite cannot parameterize table names.
-	res, err := sqlDB.Exec(`DELETE FROM `+table+` WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("delete from %s %d: %w", table, id, err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected deleting from %s %d: %w", table, id, err)
-	}
-	if affected == 0 {
-		return fmt.Errorf("delete from %s %d: %w", table, id, ErrNotFound)
-	}
-	return nil
+func deleteByID(ctx context.Context, sqlDB *sql.DB, table string, id int64) error {
+	return withSpanErr(ctx, "delete "+table, func(ctx context.Context) error {
+		// table is never user input — every caller passes a literal — so
+		// interpolating it is safe; SQLite cannot parameterize table names.
+		res, err := sqlDB.ExecContext(ctx, `DELETE FROM `+table+` WHERE id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("delete from %s %d: %w", table, id, err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("rows affected deleting from %s %d: %w", table, id, err)
+		}
+		if affected == 0 {
+			return fmt.Errorf("delete from %s %d: %w", table, id, ErrNotFound)
+		}
+		return nil
+	})
 }
 
 // Weights are stored as whole grams rather than a REAL number of
@@ -157,11 +160,13 @@ func JournalMode(sqlDB *sql.DB) (string, error) {
 // file: no companion -wal or -shm file to keep alongside it.
 //
 // path must not already exist; VACUUM INTO refuses to overwrite.
-func BackupTo(sqlDB *sql.DB, path string) error {
-	if _, err := sqlDB.Exec(`VACUUM INTO ?`, path); err != nil {
-		return fmt.Errorf("vacuum into %s: %w", path, err)
-	}
-	return nil
+func BackupTo(ctx context.Context, sqlDB *sql.DB, path string) error {
+	return withSpanErr(ctx, "BackupTo", func(ctx context.Context) error {
+		if _, err := sqlDB.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+			return fmt.Errorf("vacuum into %s: %w", path, err)
+		}
+		return nil
+	})
 }
 
 // KgToGrams converts a kilogram value to whole grams, rounding to the
@@ -327,21 +332,23 @@ func parseStoredTime(s string) (time.Time, error) {
 
 // DeleteAllData removes every entry, goal, and marker in a single
 // transaction.
-func DeleteAllData(sqlDB *sql.DB) error {
-	tx, err := sqlDB.Begin()
-	if err != nil {
-		return fmt.Errorf("begin delete-all tx: %w", err)
-	}
-	defer tx.Rollback()
+func DeleteAllData(ctx context.Context, sqlDB *sql.DB) error {
+	return withSpanErr(ctx, "DeleteAllData", func(ctx context.Context) error {
+		tx, err := sqlDB.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin delete-all tx: %w", err)
+		}
+		defer tx.Rollback()
 
-	if _, err := tx.Exec(`DELETE FROM entries`); err != nil {
-		return fmt.Errorf("delete entries: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM goals`); err != nil {
-		return fmt.Errorf("delete goals: %w", err)
-	}
-	if _, err := tx.Exec(`DELETE FROM markers`); err != nil {
-		return fmt.Errorf("delete markers: %w", err)
-	}
-	return tx.Commit()
+		if _, err := tx.ExecContext(ctx, `DELETE FROM entries`); err != nil {
+			return fmt.Errorf("delete entries: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM goals`); err != nil {
+			return fmt.Errorf("delete goals: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM markers`); err != nil {
+			return fmt.Errorf("delete markers: %w", err)
+		}
+		return tx.Commit()
+	})
 }
