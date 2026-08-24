@@ -26,6 +26,7 @@ import (
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/handlers"
 	"weight-tracker/internal/metrics"
+	"weight-tracker/internal/profiling"
 	"weight-tracker/internal/tracing"
 )
 
@@ -39,7 +40,10 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "weight-tracker.db", "path to sqlite database file")
 	otelEndpoint := flag.String("otel-endpoint", "", "host:port of an OTLP/gRPC trace collector; tracing is disabled if empty")
+	pprofAddr := flag.String("pprof-addr", ":6060", "listen address for pprof debug endpoints; never expose this outside the cluster")
 	flag.Parse()
+
+	go profiling.ListenAndServe(*pprofAddr)
 
 	// Best-effort: this app doesn't handle SIGTERM (see the ListenAndServe
 	// call below), so on a pod delete this shutdown func never actually
