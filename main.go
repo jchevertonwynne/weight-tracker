@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"flag"
 	"log"
@@ -25,6 +26,7 @@ import (
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/handlers"
 	"weight-tracker/internal/metrics"
+	"weight-tracker/internal/tracing"
 )
 
 //go:embed templates/*.html
@@ -36,7 +38,18 @@ var staticFS embed.FS
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "weight-tracker.db", "path to sqlite database file")
+	otelEndpoint := flag.String("otel-endpoint", "", "host:port of an OTLP/gRPC trace collector; tracing is disabled if empty")
 	flag.Parse()
+
+	// Best-effort: this app doesn't handle SIGTERM (see the ListenAndServe
+	// call below), so on a pod delete this shutdown func never actually
+	// runs and the last batch of spans is lost. Fine for a hobby app's
+	// traffic volume; the exporter still flushes on its own timer.
+	shutdownTracing, err := tracing.Init(context.Background(), "weight-tracker", *otelEndpoint)
+	if err != nil {
+		log.Fatalf("init tracing: %v", err)
+	}
+	defer shutdownTracing(context.Background())
 
 	sqlDB, err := db.Open(*dbPath)
 	if err != nil {
@@ -61,7 +74,8 @@ func main() {
 	}
 
 	log.Printf("weight-tracker listening on %s (db: %s, journal: %s)", *addr, *dbPath, journalMode)
-	if err := http.ListenAndServe(*addr, metrics.Instrument(mux)); err != nil {
+	handler := tracing.Middleware("weight-tracker", metrics.Instrument(mux))
+	if err := http.ListenAndServe(*addr, handler); err != nil {
 		log.Fatal(err)
 	}
 }
