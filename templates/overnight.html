@@ -1,5 +1,73 @@
+{{/* The tab is split in two by what the range filter reaches. The
+     calculator cards come first and are deliberately outside it: they
+     compare fixed 7d/30d/90d/1y windows, which is the whole point of them,
+     so a filter above would have looked like it governed them. The filter
+     then sits directly on top of the only cards it does scope. */}}
 {{define "overnight-tab"}}
 <div class="tab-panel" id="tab-overnight" hidden>
+	<section class="card">
+		<h2>Weigh-in calculator</h2>
+		<p class="empty">
+			Enter the weight you need to hit at tomorrow's morning weigh-in.
+			With nothing entered, the boxes below show the overnight
+			<em>change</em> (kg) over each timescale; once you enter a
+			target, they shift onto the bedtime weight that would get you
+			there.
+			<strong>Weighing less is always fine</strong> — each column runs
+			from your best night on record at the bottom to your worst at the
+			top, so the green end is the weight that every night you have
+			logged would have carried to the target, and your odds fade out
+			from there. There is no line to land on, only a colour that gets
+			worse the higher you go.
+		</p>
+		<div class="entry-form">
+			<label class="field">
+				<span>Target morning weight (kg)</span>
+				<input type="number" step="0.1" min="0" id="overnight-calc-target"
+					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5">
+			</label>
+		</div>
+		{{/* Which timescales appear depends on how much history exists — a
+		     90-day window over ten days of data repeats the 30-day one — so
+		     /overnight/windows decides the set and chart-app.js draws all of
+		     it. */}}
+		<p class="empty" id="overnight-window-empty" hidden></p>
+		{{/* Only meaningful once a target is entered and the boxes are
+		     projected onto bedtime weight; chart-app.js toggles it. */}}
+		<ul class="zone-key" id="overnight-zone-key" hidden>
+			<li><span class="zone-key-swatch zone-safe"></span>At or below — every night on record makes it</li>
+			<li><span class="zone-key-swatch zone-fade"></span>Fading — fewer of your nights make it, the higher you go</li>
+			<li><span class="zone-key-swatch zone-miss"></span>Above — no night on record makes it</li>
+			<li><span class="zone-key-swatch zone-key-mean"></span>Black line — your average night, where it is a coin flip</li>
+		</ul>
+		{{/* Fixed-height box rather than letting the canvas size itself: with
+		     maintainAspectRatio the height is derived from the measured width,
+		     so an htmx swap of this fragment re-measured mid-layout and the
+		     chart came back squashed. */}}
+		<div class="chart-box" id="overnight-window-box">
+			<canvas id="overnight-window-chart"></canvas>
+		</div>
+	</section>
+
+	<section class="card">
+		<h2>Will I make it?</h2>
+		<p class="empty">
+			Enter tonight's actual weight to see the plausible range for
+			tomorrow morning — using the mean ± 1 standard deviation from each
+			timescale above — and whether that range clears your current
+			goal weight.
+		</p>
+		<div class="entry-form">
+			<label class="field">
+				<span>Tonight's weight (kg)</span>
+				<input type="number" step="0.1" min="0" id="overnight-tonight-input"
+					hx-preserve="true" autocomplete="off" placeholder="e.g. 110">
+			</label>
+		</div>
+		<p class="empty" id="overnight-tonight-empty" hidden></p>
+		<div class="summary-stats" id="overnight-tonight-results"></div>
+	</section>
+
 	<section class="card">
 		<h2>Filter</h2>
 		<form id="overnight-filter" class="chart-controls"
@@ -16,10 +84,12 @@
 </div>
 {{end}}
 
-{{/* overnight-content is the htmx-swappable fragment: stats, the weigh-in
-     calculator, and the pairs table, all scoped to whatever range the
-     filter form above currently has selected. Field names (Overnight/Pairs)
-     match handleIndex's full data struct — see overnight.go. */}}
+{{/* overnight-content is the htmx-swappable fragment, and it holds exactly
+     what the range filter scopes: the stats and the pairs table. The
+     calculator above is out of it on purpose — swapping it would tear down
+     and rebuild a chart whose data never depended on the range. Field names
+     (Overnight/Pairs) match handleIndex's full data struct — see
+     overnight.go. */}}
 {{define "overnight-content"}}
 <div id="overnight-content">
 	<section class="card">
@@ -50,67 +120,6 @@
 				</div>
 			</div>
 		{{end}}
-	</section>
-
-	<section class="card">
-		<h2>Weigh-in calculator</h2>
-		<p class="empty">
-			Enter the weight you need to hit at tomorrow's morning weigh-in.
-			With nothing entered, the boxes below show the overnight
-			<em>change</em> (kg) for each checked window; once you enter a
-			target, they shift onto the bedtime weight that would get you
-			there.
-			<strong>Weighing less is always fine</strong> — the shaded area
-			below each box is the range that comfortably makes it. The box
-			itself is not a range you have to land in, only where one
-			standard deviation of your overnight losses leaves the outcome
-			uncertain.
-		</p>
-		<div class="entry-form">
-			<label class="field">
-				<span>Target morning weight (kg)</span>
-				<input type="number" step="0.1" min="0" id="overnight-calc-target"
-					hx-preserve="true" autocomplete="off" placeholder="e.g. 82.5">
-			</label>
-		</div>
-		{{/* Filled in by chart-app.js from /overnight/windows: which
-		     timescales are worth offering depends on how much history
-		     exists, and only the server knows that. */}}
-		<div class="chart-controls-row" id="overnight-window-toggles"></div>
-		<p class="empty" id="overnight-window-empty" hidden></p>
-		{{/* Only meaningful once a target is entered and the boxes are
-		     projected onto bedtime weight; chart-app.js toggles it. */}}
-		<ul class="zone-key" id="overnight-zone-key" hidden>
-			<li><span class="zone-key-swatch zone-safe"></span>At or below — very likely to hit the target</li>
-			<li><span class="zone-key-swatch zone-borderline"></span>Could go either way</li>
-			<li><span class="zone-key-whisker"></span>Best and worst night on record</li>
-		</ul>
-		{{/* Fixed-height box rather than letting the canvas size itself: with
-		     maintainAspectRatio the height is derived from the measured width,
-		     so an htmx swap of this fragment re-measured mid-layout and the
-		     chart came back squashed. */}}
-		<div class="chart-box" id="overnight-window-box">
-			<canvas id="overnight-window-chart"></canvas>
-		</div>
-	</section>
-
-	<section class="card">
-		<h2>Will I make it?</h2>
-		<p class="empty">
-			Enter tonight's actual weight to see the plausible range for
-			tomorrow morning — using the mean ± 1 standard deviation from each
-			checked window above — and whether that range clears your current
-			goal weight.
-		</p>
-		<div class="entry-form">
-			<label class="field">
-				<span>Tonight's weight (kg)</span>
-				<input type="number" step="0.1" min="0" id="overnight-tonight-input"
-					hx-preserve="true" autocomplete="off" placeholder="e.g. 110">
-			</label>
-		</div>
-		<p class="empty" id="overnight-tonight-empty" hidden></p>
-		<div class="summary-stats" id="overnight-tonight-results"></div>
 	</section>
 
 	<section class="card">

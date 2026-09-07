@@ -9,9 +9,12 @@ import (
 	"weight-tracker/internal/timerange"
 )
 
-// HandleOvernightTab renders the Overnight tab's stats/calculator/pairs-table
+// HandleOvernightTab renders the Overnight tab's stats and pairs-table
 // fragment, filtered by the same range/from/until triple the chart and
-// History filter submit via the shared time-range-picker.
+// History filter submit via the shared time-range-picker. The calculator
+// cards are not part of it: they compare fixed windows that ignore the
+// filter, so they stay put on the page rather than being re-rendered and
+// re-charted on every range change.
 func (s *Server) HandleOvernightTab(w http.ResponseWriter, r *http.Request) {
 	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {

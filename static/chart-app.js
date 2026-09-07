@@ -663,26 +663,31 @@ function calendarTicks(axis) {
 	refreshChart();
 })();
 
-// Overnight tab's "Range by timescale" chart: one box-plot-style entry per
-// fixed window (7d/30d/90d) the user has ticked on, showing mean overnight
-// change ± 1 sample standard deviation as the box, whiskers stretching to
-// the actual smallest/largest change seen in that window, and a bold tick
-// at the mean. It's a hybrid of a real box plot's shape with this app's
-// mean/stddev statistical basis rather than true quartiles — worth knowing
-// before reading "min"/"max" as anything other than "most extreme night on
-// record in this window".
+// Overnight tab's "Range by timescale" chart: one column per fixed window
+// (7d/30d/90d/1y) the server has data for, spanning the smallest to the
+// largest overnight change seen in that window and shaded green at the safe
+// end through to red at the risky one.
+//
+// It was a box plot — ±1 SD box, min/max whiskers, a tick at the mean — and
+// the shape lied about what the numbers mean. A box centred on the mean
+// invites you to read the middle as the value to aim for, when the only
+// figure with a real guarantee behind it is the safe end: land there and
+// every night you have logged would have made the target. The odds decay
+// continuously from there, so the chart is now continuous too, and no single
+// point on it is nominated as the answer.
 //
 // Also drives the "Will I make it?" calculator below it: given tonight's
-// actual weight, project the plausible morning-weight range per checked
-// window and compare it against the currently active goal (if any) — both
-// pull from the same fetched data and the same checkbox state, so ticking a
-// window on or off updates the chart and the calculator together.
+// actual weight, project the plausible morning-weight range per window and
+// compare it against the currently active goal (if any) — both pull from
+// the same fetched data, so the chart and the calculator always show the
+// same set of timescales.
 //
-// Unlike the main chart above, this canvas lives inside the htmx-swappable
-// #overnight-content fragment — the filter form and entries-changed both
-// replace it wholesale — so elements are looked up fresh on every refresh
-// rather than captured once at load, and any previous Chart instance
-// (bound to whatever canvas element used to be there) is torn down first.
+// The canvas sits outside #overnight-content, the fragment the range filter
+// swaps, because none of this depends on that filter. Elements are still
+// looked up fresh on every refresh and any previous Chart instance torn down
+// first: htmx swaps elsewhere on the page are what this listens to, and
+// caching a node across one is how you end up drawing into a canvas that was
+// detached from the document.
 (function () {
 	if (typeof Chart === 'undefined') return;
 
@@ -690,30 +695,53 @@ function calendarTicks(axis) {
 		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
 
-	function colorFor(meanKg) {
-		return meanKg < 0 ? cssVar('--loss') : cssVar('--gain');
+	// columnGradient paints one window's column from green at its best
+	// recorded night to red at its worst, with the amber stop placed at the
+	// mean rather than halfway up: the mean is the coin flip, not a value to
+	// aim for, and putting it at the geometric middle would imply the odds
+	// change evenly across the column when they don't.
+	//
+	// Bottom-to-top is safe-to-risky in both modes. Projected, a lower
+	// bedtime weight always makes the target easier; un-projected, a bigger
+	// overnight loss always leaves more headroom.
+	function columnGradient(chartInstance, p) {
+		const { ctx, scales } = chartInstance;
+		const amber = cssVar('--borderline');
+		const yBottom = scales.y.getPixelForValue(p.minKg);
+		const yTop = scales.y.getPixelForValue(p.maxKg);
+		// One night logged collapses min/mean/max onto each other: there is no
+		// span to fade across and no basis for calling it safe or risky, so it
+		// gets the flat "could go either way" colour.
+		if (!(yBottom > yTop)) return amber;
+		const gradient = ctx.createLinearGradient(0, yBottom, 0, yTop);
+		gradient.addColorStop(0, cssVar('--loss'));
+		const meanStop = (p.meanKg - p.minKg) / (p.maxKg - p.minKg);
+		if (meanStop > 0 && meanStop < 1) gradient.addColorStop(meanStop, amber);
+		gradient.addColorStop(1, cssVar('--gain'));
+		return gradient;
 	}
 
-	// overnightBoxPlotPlugin draws the whiskers (min/max, with end caps) and
-	// the mean tick that a plain floating-bar dataset can't express on its
-	// own — the bar dataset itself only draws the ±1 SD box. Registered
-	// once at load, same as yearBoundariesPlugin above; which points to
-	// draw is passed fresh through plugin options on every render, the same
-	// way markerLines below takes `markers` from `data.markers`.
-	const whiskerCapHalfWidth = 10;
-	const meanTickHalfWidth = 18;
-	const overnightBoxPlotPlugin = {
-		id: 'overnightBoxPlot',
+	// overnightRangeBandsPlugin extends each column past the range it was
+	// actually built from — solid green below the best night on record, solid
+	// red above the worst — and draws the target line. All three are things a
+	// bar dataset can't express: the bar stops at the data, but the verdict
+	// doesn't. Registered once at load, same as yearBoundariesPlugin above;
+	// which points to draw is passed fresh through plugin options on every
+	// render, the same way markerLines below takes `markers` from
+	// `data.markers`.
+	const overnightRangeBandsPlugin = {
+		id: 'overnightRangeBands',
 
-		// Everything at or below the box is at least as good as the box, and
-		// a plain floating box says the opposite — it reads as a band you
-		// have to land inside, when weighing less at bedtime only makes the
-		// target easier. This shades from the bottom of the plot up to the
-		// cautious end of the box to say so, and it goes in beforeDatasetsDraw
-		// so the box and whiskers stay legible on top of it.
+		// Everything below a column is at least as good as the column, and
+		// everything above it is worse — a bar that simply stops at the lowest
+		// and highest night on record says neither, and reads instead as a band
+		// you have to land inside. These bands carry the gradient's meaning out
+		// to the edges of the plot: at or below the green, every night you have
+		// logged would have made the target; up in the red, none of them would.
+		// Drawn in beforeDatasetsDraw so the columns stay legible on top.
 		//
-		// Only in projected mode: without a target the axis is overnight
-		// change, where "lower is safer" is not what the numbers mean.
+		// Only in projected mode: without a target there is no making or
+		// missing anything, so there is no verdict to extend.
 		beforeDatasetsDraw(chartInstance, _args, opts) {
 			const { points, targetKg } = opts;
 			if (!points || !points.length) return;
@@ -721,139 +749,95 @@ function calendarTicks(axis) {
 			const { ctx, chartArea, scales } = chartInstance;
 			const meta = chartInstance.getDatasetMeta(0);
 			ctx.save();
-			ctx.fillStyle = cssVar('--loss-zone');
 			points.forEach((p, i) => {
 				const element = meta && meta.data && meta.data[i];
 				const halfWidth = ((element && element.width) || 40) / 2;
 				const x = scales.x.getPixelForValue(i);
-				const yTop = scales.y.getPixelForValue(p.lowKg);
-				ctx.fillRect(x - halfWidth, yTop, halfWidth * 2, chartArea.bottom - yTop);
+				const ySafe = scales.y.getPixelForValue(p.minKg);
+				ctx.fillStyle = cssVar('--loss-zone');
+				ctx.fillRect(x - halfWidth, ySafe, halfWidth * 2, chartArea.bottom - ySafe);
+				const yMiss = scales.y.getPixelForValue(p.maxKg);
+				ctx.fillStyle = cssVar('--gain-zone');
+				ctx.fillRect(x - halfWidth, chartArea.top, halfWidth * 2, yMiss - chartArea.top);
 			});
 			ctx.restore();
 		},
 
+		// Two overlays on top of the columns: a black line at each window's
+		// average night, and the target line.
+		//
+		// The average sits exactly where the gradient turns amber, so the
+		// line names the colour rather than adding a claim of its own — it is
+		// the coin flip, not somewhere to aim. Black because it is only ever
+		// drawn across a saturated column, where it reads in either theme.
+		//
+		// The target line, once the columns are projected onto bedtime
+		// weight, is what makes the axis mean anything: the distance from a
+		// column down to it *is* the overnight loss that column assumes.
+		// Dashed in --goal to match the goal line on the main chart, so the
+		// two read as the same kind of reference.
 		afterDatasetsDraw(chartInstance, _args, opts) {
-			const points = opts.points;
-			if (!points || !points.length) return;
-			const { ctx, scales } = chartInstance;
-			ctx.save();
-			ctx.strokeStyle = cssVar('--on-surface-muted');
-			ctx.lineWidth = 1.5;
-			points.forEach((p, i) => {
-				const x = scales.x.getPixelForValue(i);
-				const yMin = scales.y.getPixelForValue(p.minKg);
-				const yMax = scales.y.getPixelForValue(p.maxKg);
-				ctx.beginPath();
-				ctx.moveTo(x, yMin);
-				ctx.lineTo(x, yMax);
-				ctx.moveTo(x - whiskerCapHalfWidth, yMin);
-				ctx.lineTo(x + whiskerCapHalfWidth, yMin);
-				ctx.moveTo(x - whiskerCapHalfWidth, yMax);
-				ctx.lineTo(x + whiskerCapHalfWidth, yMax);
-				ctx.stroke();
-			});
-			ctx.strokeStyle = cssVar('--on-surface');
-			ctx.lineWidth = 2.5;
-			points.forEach((p, i) => {
-				const x = scales.x.getPixelForValue(i);
-				const yMean = scales.y.getPixelForValue(p.meanKg);
-				ctx.beginPath();
-				ctx.moveTo(x - meanTickHalfWidth, yMean);
-				ctx.lineTo(x + meanTickHalfWidth, yMean);
-				ctx.stroke();
-			});
+			const { points, targetKg } = opts;
+			const { ctx, chartArea, scales } = chartInstance;
+			const meta = chartInstance.getDatasetMeta(0);
 
-			// The target line. Once the boxes are projected onto bedtime
-			// weight, the distance from a box down to this line *is* the
-			// overnight loss it assumes — without it drawn, the numbers on
-			// the axis are absolute weights with nothing to read them
-			// against. Dashed in --goal to match the goal line on the main
-			// chart, so the two read as the same kind of reference.
-			const { targetKg } = opts;
-			if (typeof targetKg === 'number' && Number.isFinite(targetKg)) {
-				const { chartArea } = chartInstance;
-				const y = scales.y.getPixelForValue(targetKg);
-				ctx.strokeStyle = cssVar('--goal');
-				ctx.lineWidth = 1.5;
-				ctx.setLineDash([6, 3]);
-				ctx.beginPath();
-				ctx.moveTo(chartArea.left, y);
-				ctx.lineTo(chartArea.right, y);
-				ctx.stroke();
-				ctx.setLineDash([]);
-
-				ctx.fillStyle = cssVar('--goal');
-				ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
-				ctx.textAlign = 'right';
-				// Sits above the line, unless the line is close enough to the
-				// top that the label would be clipped by the plot area.
-				const above = y - 4 > chartArea.top + 10;
-				ctx.textBaseline = above ? 'bottom' : 'top';
-				ctx.fillText(`Target ${targetKg.toFixed(1)} kg`, chartArea.right - 4, above ? y - 4 : y + 4);
+			if (points && points.length) {
+				ctx.save();
+				ctx.strokeStyle = '#000000';
+				ctx.lineWidth = 2;
+				points.forEach((p, i) => {
+					const element = meta && meta.data && meta.data[i];
+					const halfWidth = ((element && element.width) || 40) / 2;
+					const x = scales.x.getPixelForValue(i);
+					const yMean = scales.y.getPixelForValue(p.meanKg);
+					ctx.beginPath();
+					ctx.moveTo(x - halfWidth, yMean);
+					ctx.lineTo(x + halfWidth, yMean);
+					ctx.stroke();
+				});
+				ctx.restore();
 			}
+
+			if (typeof targetKg !== 'number' || !Number.isFinite(targetKg)) return;
+			const y = scales.y.getPixelForValue(targetKg);
+			ctx.save();
+			ctx.strokeStyle = cssVar('--goal');
+			ctx.lineWidth = 1.5;
+			ctx.setLineDash([6, 3]);
+			ctx.beginPath();
+			ctx.moveTo(chartArea.left, y);
+			ctx.lineTo(chartArea.right, y);
+			ctx.stroke();
+			ctx.setLineDash([]);
+
+			ctx.fillStyle = cssVar('--goal');
+			ctx.font = '10px "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
+			ctx.textAlign = 'right';
+			// Sits above the line, unless the line is close enough to the top
+			// that the label would be clipped by the plot area.
+			const above = y - 4 > chartArea.top + 10;
+			ctx.textBaseline = above ? 'bottom' : 'top';
+			ctx.fillText(`Target ${targetKg.toFixed(1)} kg`, chartArea.right - 4, above ? y - 4 : y + 4);
 			ctx.restore();
 		},
 	};
-	Chart.register(overnightBoxPlotPlugin);
+	Chart.register(overnightRangeBandsPlugin);
 
 	let chart = null;
 	let cachedData = null; // last successful /overnight/windows fetch
 
-	// Which timescales are worth offering depends on how much history there
-	// is — a 90-day window over ten days of data is the same figures as the
-	// 30-day one — so the server decides and the toggles are built from what
-	// it returns rather than hardcoded in the template.
-	//
-	// The set holds the windows the user has switched *off*, so one that
-	// appears later (once there is enough history for it to differ) arrives
-	// switched on. It also survives the toggles being rebuilt, which the old
-	// hx-preserve on static checkboxes used to handle.
-	const uncheckedWindows = new Set();
-
-	function renderWindowToggles(data) {
-		const container = document.getElementById('overnight-window-toggles');
-		if (!container) return;
-		const points = (data && data.points) || [];
-		container.replaceChildren();
-		points.forEach((p) => {
-			const label = document.createElement('label');
-			label.className = 'field field-checkbox';
-
-			const input = document.createElement('input');
-			input.type = 'checkbox';
-			input.dataset.window = p.label;
-			input.checked = !uncheckedWindows.has(p.label);
-			input.autocomplete = 'off';
-			input.addEventListener('change', () => {
-				if (input.checked) uncheckedWindows.delete(p.label);
-				else uncheckedWindows.add(p.label);
-				renderAll();
-			});
-
-			const text = document.createElement('span');
-			text.textContent = p.name || p.label;
-
-			label.appendChild(input);
-			label.appendChild(text);
-			container.appendChild(label);
-		});
+	// visiblePoints keeps only windows that actually have at least one pair —
+	// a window with zero pairs has no meaningful mean/min/max to plot or
+	// project from, so it's dropped rather than drawn as a degenerate
+	// zero-height box at 0kg. Which windows exist at all is the server's
+	// call: a 90-day window over ten days of data repeats the 30-day one's
+	// figures, so /overnight/windows leaves it out rather than the client
+	// filtering it here.
+	function visiblePoints(data) {
+		return data.points.filter((p) => p.count > 0);
 	}
 
-	function checkedWindowLabels() {
-		return Array.from(document.querySelectorAll('#overnight-window-toggles input[data-window]'))
-			.filter((el) => el.checked)
-			.map((el) => el.dataset.window);
-	}
-
-	// visiblePoints keeps only checked windows that actually have at least
-	// one pair — a window with zero pairs has no meaningful mean/min/max to
-	// plot or project from, so it's dropped rather than drawn as a
-	// degenerate zero-height box at 0kg.
-	function visiblePoints(data, checked) {
-		return data.points.filter((p) => p.count > 0 && checked.includes(p.label));
-	}
-
-	// projectOntoTarget shifts each point's overnight-change box/whiskers
+	// projectOntoTarget shifts each point's overnight-change figures
 	// (in delta-kg, e.g. "-2.0 to -1.0") onto an absolute bedtime-weight
 	// scale anchored at targetKg (the desired morning weight): bedtime
 	// weight = target - delta, since a negative (loss) delta means you can
@@ -865,20 +849,21 @@ function calendarTicks(axis) {
 	function projectOntoTarget(points, targetKg) {
 		return points.map((p) => {
 			const mean = targetKg - p.meanKg;
-			const boxA = targetKg - p.lowKg;
-			const boxB = targetKg - p.highKg;
-			const whiskerA = targetKg - p.minKg;
-			const whiskerB = targetKg - p.maxKg;
+			const sdA = targetKg - p.lowKg;
+			const sdB = targetKg - p.highKg;
+			const extremeA = targetKg - p.minKg;
+			const extremeB = targetKg - p.maxKg;
 			return {
 				label: p.label,
+				name: p.name,
 				count: p.count,
 				hasRange: p.hasRange,
 				meanKg: mean,
 				meanLabel: mean.toFixed(1) + ' kg',
-				lowKg: Math.min(boxA, boxB),
-				highKg: Math.max(boxA, boxB),
-				minKg: Math.min(whiskerA, whiskerB),
-				maxKg: Math.max(whiskerA, whiskerB),
+				lowKg: Math.min(sdA, sdB),
+				highKg: Math.max(sdA, sdB),
+				minKg: Math.min(extremeA, extremeB),
+				maxKg: Math.max(extremeA, extremeB),
 			};
 		});
 	}
@@ -897,21 +882,19 @@ function calendarTicks(axis) {
 	// bedtime-weight scale that wasted the bottom 108kg of the panel on
 	// values that will never occur, squashing a ~1kg spread into a sliver.
 	//
-	// The whiskers are drawn by overnightBoxPlotPlugin straight onto the
-	// canvas, so Chart.js has no idea they exist and would happily clip
-	// them; every drawn value is folded in here rather than just the bar's
-	// own [low, high].
+	// Every plotted value is folded in rather than just the column's own
+	// [min, max], so nothing a caller decides to draw ends up clipped.
 	// Padding is a fraction of the spread rather than a fixed number of
-	// kilograms: these boxes are usually about a kilogram tall, and a fixed
-	// pad wide enough to look right on a 5kg spread leaves a 1kg one
+	// kilograms: these columns are usually a kilogram or two tall, and a
+	// fixed pad wide enough to look right on a 5kg spread leaves a 1kg one
 	// stranded in the middle of a mostly empty panel. The floor keeps a
-	// degenerate case readable — one night logged collapses the box to a
+	// degenerate case readable — one night logged collapses the column to a
 	// single value, and a purely proportional pad would give it a
 	// zero-height axis.
 	const axisPaddingFraction = 0.1;
 	const minAxisPaddingKg = 0.2;
 	// targetKg is folded in so the target line is always on screen. It is
-	// usually below every box — that gap is the overnight loss — so without
+	// usually below every column — that gap is the overnight loss — so without
 	// this the axis would stop short and the line would be drawn outside the
 	// plot area.
 	function yAxisBounds(points, targetKg) {
@@ -936,7 +919,7 @@ function calendarTicks(axis) {
 		return { min: lo - pad, max: hi + pad };
 	}
 
-	function renderChart(data, checked) {
+	function renderChart(data) {
 		const canvas = document.getElementById('overnight-window-chart');
 		if (!canvas) return;
 		const emptyEl = document.getElementById('overnight-window-empty');
@@ -958,12 +941,12 @@ function calendarTicks(axis) {
 			return;
 		}
 
-		const points = visiblePoints(data, checked);
+		const points = visiblePoints(data);
 		if (!points.length) {
 			box.hidden = true;
 			if (emptyEl) {
 				emptyEl.hidden = false;
-				emptyEl.textContent = 'No windows selected — check at least one of 7/30/90 days above.';
+				emptyEl.textContent = 'No timescale has an overnight pair in it yet.';
 			}
 			return;
 		}
@@ -972,19 +955,16 @@ function calendarTicks(axis) {
 
 		const targetKg = currentTargetKg();
 		const plotPoints = targetKg === null ? points : projectOntoTarget(points, targetKg);
-		// The zones only exist once the boxes mean bedtime weight.
+		// The verdict bands only exist once the columns mean bedtime weight.
 		if (zoneKey) zoneKey.hidden = targetKg === null;
 
 		const labels = plotPoints.map((p) => p.label);
-		const boxes = plotPoints.map((p) => (p.hasRange ? [p.lowKg, p.highKg] : [p.meanKg, p.meanKg]));
-		// Un-projected, the bar is a raw overnight change and its colour
-		// carries the loss/gain sign. Projected, every bar would be the same
-		// colour — a bedtime ceiling in kg is always positive — and the
-		// meaningful distinction is instead how confident the number is: the
-		// shaded zone below is comfortable, this band is the coin flip.
-		const colors = targetKg === null
-			? points.map((p) => colorFor(p.meanKg))
-			: points.map(() => cssVar('--borderline'));
+		// The column spans the whole observed range — best night on record to
+		// worst — rather than the ±1 SD box it used to. The box put the mean
+		// in the middle of the shape, which reads as the value to aim for
+		// when it is really the coin flip; the gradient says the same thing
+		// about the odds without nominating a number.
+		const columns = plotPoints.map((p) => [p.minKg, p.maxKg]);
 
 		try {
 			chart = new Chart(canvas, {
@@ -993,11 +973,21 @@ function calendarTicks(axis) {
 					datasets: [
 						{
 							type: 'bar',
-							label: targetKg === null ? 'Mean ± 1 SD' : 'Borderline band (± 1 SD)',
-							data: boxes,
-							backgroundColor: colors,
+							label: targetKg === null ? 'Overnight change' : 'Bedtime weight',
+							data: columns,
+							// Scriptable because the gradient is built from pixel
+							// positions, which don't exist until the scales have
+							// been laid out; Chart.js re-runs this once they have.
+							backgroundColor: (context) => {
+								const p = plotPoints[context.dataIndex];
+								if (!p || !context.chart.chartArea) return;
+								return columnGradient(context.chart, p);
+							},
 							borderRadius: 4,
 							barThickness: 40,
+							// One night logged gives a zero-height column, which
+							// would draw as nothing at all and take no tooltip.
+							minBarLength: 3,
 						},
 					],
 				},
@@ -1027,24 +1017,37 @@ function calendarTicks(axis) {
 						legend: { display: false },
 						tooltip: {
 							callbacks: {
-								title: (items) => plotPoints[items[0].dataIndex].label,
+								title: (items) => plotPoints[items[0].dataIndex].name || plotPoints[items[0].dataIndex].label,
 								label: (item) => {
 									const p = plotPoints[item.dataIndex];
-									const lines = [(targetKg === null ? 'Mean: ' : 'Typical bedtime weight: ') + p.meanLabel];
-									lines.push(
-										p.hasRange
-											? (targetKg === null
+									if (targetKg === null) {
+										const lines = [`Mean: ${p.meanLabel}`];
+										lines.push(
+											p.hasRange
 												? `±1 SD: ${p.lowKg.toFixed(1)} to ${p.highKg.toFixed(1)} kg`
-												: `Comfortable at or below ${p.lowKg.toFixed(1)} kg; uncertain up to ${p.highKg.toFixed(1)} kg`)
-											: 'Not enough nights yet for a range',
-									);
-									lines.push(`Widest ever: ${p.minKg.toFixed(1)} to ${p.maxKg.toFixed(1)} kg`);
+												: 'Not enough nights yet for a range',
+										);
+										lines.push(`Widest ever: ${p.minKg.toFixed(1)} to ${p.maxKg.toFixed(1)} kg`);
+										lines.push(`${p.count} night${p.count === 1 ? '' : 's'} logged`);
+										return lines;
+									}
+									// Read bottom-up, matching the column: the
+									// green end is the only figure every logged
+									// night clears, and each line above it is a
+									// weaker claim than the one below.
+									const lines = [`${p.minKg.toFixed(1)} kg or under: every night on record makes it`];
+									// Being a standard deviation to the safe side
+									// of the mean is roughly five nights in six
+									// for a normal spread.
+									if (p.hasRange) lines.push(`${p.lowKg.toFixed(1)} kg: about 5 nights in 6`);
+									lines.push(`${p.meanLabel}: a coin flip`);
+									lines.push(`Over ${p.maxKg.toFixed(1)} kg: no night on record makes it`);
 									lines.push(`${p.count} night${p.count === 1 ? '' : 's'} logged`);
 									return lines;
 								},
 							},
 						},
-						overnightBoxPlot: { points: plotPoints, targetKg },
+						overnightRangeBands: { points: plotPoints, targetKg },
 					},
 				},
 			});
@@ -1054,12 +1057,12 @@ function calendarTicks(axis) {
 	}
 
 	// recomputeTonightCalculator projects tonight's entered weight forward
-	// through each checked window's mean ± 1 SD to get a plausible morning
+	// through each window's mean ± 1 SD to get a plausible morning
 	// range, then — if a goal is currently active — judges whether that
 	// range clears it: comfortably (the whole range is at/under goal), at
 	// risk (the whole range is over), or borderline (goal falls inside the
 	// range, so it could go either way).
-	function recomputeTonightCalculator(data, checked) {
+	function recomputeTonightCalculator(data) {
 		const resultsEl = document.getElementById('overnight-tonight-results');
 		const emptyEl = document.getElementById('overnight-tonight-empty');
 		const input = document.getElementById('overnight-tonight-input');
@@ -1072,10 +1075,10 @@ function calendarTicks(axis) {
 			emptyEl.textContent = 'Not enough data yet to project a morning range.';
 			return;
 		}
-		const points = visiblePoints(data, checked);
+		const points = visiblePoints(data);
 		if (!points.length) {
 			emptyEl.hidden = false;
-			emptyEl.textContent = 'No windows selected — check at least one of 7/30/90 days above.';
+			emptyEl.textContent = 'No timescale has an overnight pair in it yet.';
 			return;
 		}
 		if (Number.isNaN(tonightKg) || tonightKg <= 0) {
@@ -1122,13 +1125,8 @@ function calendarTicks(axis) {
 
 	function renderAll() {
 		if (!cachedData) return;
-		if (!document.querySelector('#overnight-window-toggles input[data-window]')) {
-			// Rebuilt after an htmx swap replaced the container.
-			renderWindowToggles(cachedData);
-		}
-		const checked = checkedWindowLabels();
-		renderChart(cachedData, checked);
-		recomputeTonightCalculator(cachedData, checked);
+		renderChart(cachedData);
+		recomputeTonightCalculator(cachedData);
 	}
 
 	// autofillGoalTarget seeds the "Weigh-in calculator" target field with
@@ -1144,8 +1142,20 @@ function calendarTicks(axis) {
 		input.value = data.goalKg.toFixed(1);
 	}
 
-	function refresh() {
-		if (!document.getElementById('overnight-window-chart')) return;
+	// force distinguishes "the data or the colours may have changed, rebuild"
+	// from "something on the page was swapped, check whether it was us".
+	//
+	// htmx:afterSwap fires on the body for every swap anywhere on the page,
+	// including the range filter below, which now replaces only the stats and
+	// the pairs table. Refetching and rebuilding on those was work with a
+	// visible flash and nothing to show for it: the fixed-window data this
+	// chart draws does not depend on the range filter at all. A live chart
+	// still holding the canvas that is in the document means the swap missed
+	// us, so there is nothing to do.
+	function refresh(force) {
+		const canvas = document.getElementById('overnight-window-chart');
+		if (!canvas) return;
+		if (!force && chart && chart.canvas === canvas) return;
 		fetch('/overnight/windows')
 			.then((res) => {
 				if (!res.ok) throw new Error('server returned ' + res.status);
@@ -1154,24 +1164,22 @@ function calendarTicks(axis) {
 			.then((data) => {
 				cachedData = data;
 				autofillGoalTarget(data);
-				// Rebuilt here rather than only in renderAll, because which
-				// windows are on offer changes with the data: logging enough
-				// history for 90d to differ from 30d should make it appear.
-				renderWindowToggles(data);
 				renderAll();
 			})
 			.catch((err) => console.error('overnight window chart refresh failed', err));
 	}
 
-	document.body.addEventListener('htmx:afterSwap', refresh);
-	document.body.addEventListener('entries-changed', refresh);
-	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
+	// A swap only matters if it replaced the canvas; new entries and a theme
+	// change always do, since both change what should be drawn.
+	document.body.addEventListener('htmx:afterSwap', () => refresh(false));
+	document.body.addEventListener('entries-changed', () => refresh(true));
+	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => refresh(true));
 	document.body.addEventListener('input', (event) => {
-		if (event.target.id === 'overnight-tonight-input') recomputeTonightCalculator(cachedData, checkedWindowLabels());
+		if (event.target.id === 'overnight-tonight-input') recomputeTonightCalculator(cachedData);
 		// Re-render the chart itself so entering/clearing a target
-		// immediately projects the boxes onto (or back off of) bedtime
+		// immediately projects the columns onto (or back off of) bedtime
 		// weight — this is the whole point of merging the two cards.
 		if (event.target.id === 'overnight-calc-target') renderAll();
 	});
-	refresh();
+	refresh(true);
 })();

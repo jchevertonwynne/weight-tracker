@@ -9,6 +9,7 @@
 	--danger: #b3261e;
 	--gain: #b3261e;
 	--loss-zone: rgba(46, 125, 50, 0.16);
+	--gain-zone: rgba(179, 38, 30, 0.14);
 	--borderline: #a25c00;
 	--loss: #146c2e;
 	--goal: #6a1b9a;
@@ -47,6 +48,7 @@
 		--danger: #ff6f60;
 		--gain: #ff6f60;
 		--loss-zone: rgba(129, 199, 132, 0.14);
+		--gain-zone: rgba(255, 111, 96, 0.14);
 		--borderline: #e0a44a;
 		--loss: #4caf80;
 		--goal: #c792ea;
@@ -669,8 +671,9 @@ select:focus {
 	flex: none;
 }
 
-/* Key for the weigh-in calculator's zones. The plot alone reads as "land
-   inside the box"; this states the part the shape cannot: below is better. */
+/* Key for the weigh-in calculator's colours. The columns alone read as
+   "land somewhere in here"; this states the part the shape cannot: down is
+   better, and the fade is odds rather than a boundary. */
 .zone-key {
 	display: flex;
 	flex-wrap: wrap;
@@ -703,16 +706,22 @@ select:focus {
 	border: 1px solid var(--loss);
 }
 
-.zone-borderline {
-	background: var(--borderline);
+/* Miniature of a column: the same green-amber-red run, bottom to top. */
+.zone-fade {
+	background: linear-gradient(to top, var(--loss), var(--borderline), var(--gain));
 }
 
-/* Mimics the whisker: a thin vertical line with end caps. */
-.zone-key-whisker {
-	width: 0.75rem;
-	height: 0.75rem;
-	flex: none;
-	border-top: 1.5px solid var(--on-surface-muted);
-	border-bottom: 1.5px solid var(--on-surface-muted);
-	background: linear-gradient(var(--on-surface-muted), var(--on-surface-muted)) center / 1.5px 100% no-repeat;
+.zone-miss {
+	background: var(--gain-zone);
+	border: 1px solid var(--gain);
+}
+
+/* The same miniature column with the average line laid across it. A bare
+   black rule would be all but invisible against the dark theme's card; on
+   the chart the line only ever crosses a saturated column, so the swatch
+   carries that backdrop with it. */
+.zone-key-mean {
+	background:
+		linear-gradient(#000000, #000000) center / 100% 2px no-repeat,
+		linear-gradient(to top, var(--loss), var(--borderline), var(--gain));
 }

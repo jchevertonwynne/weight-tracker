@@ -1,6 +1,6 @@
 // Package overnight computes the evening-to-morning weight change: the
-// per-pair deltas, a filtered-range summary, and a fixed 7d/30d/90d
-// box-plot-style comparison used by the Overnight tab.
+// per-pair deltas, a filtered-range summary, and a fixed 7d/30d/90d/1y
+// comparison used by the Overnight tab.
 package overnight
 
 import (
@@ -153,7 +153,7 @@ func WindowedPairs(entries []db.Entry, window timerange.Window) []Pair {
 // string timerange.Resolve takes, so no conversion is needed here.
 var windowSpans = []struct {
 	Label string // short, for the chart's x-axis
-	Name  string // spelled out, for the toggle beside the chart
+	Name  string // spelled out, for the chart tooltip
 	Range string
 }{
 	{"7d", "7 days", "7"},
@@ -162,15 +162,15 @@ var windowSpans = []struct {
 	{"1y", "1 year", "365"},
 }
 
-// WindowPoint is one window's box-plot-style entry in the "Range by
-// timescale" chart: the box is the mean overnight delta ± 1 sample-standard-
-// deviation, and the whiskers extend to the actual smallest/largest delta
-// seen in that window — a hybrid of a real box plot's shape with this app's
-// mean/stddev statistical basis rather than quartiles. HasRange is false
-// below two pairs, since a standard deviation needs at least two samples to
-// mean anything — the box then collapses to a single point at the mean
-// rather than showing a fabricated zero-width band (Min/Max still equal
-// Mean in that case, for the same reason).
+// WindowPoint is one window's entry in the "Range by timescale" chart. Min
+// and Max are the actual smallest and largest overnight delta seen in the
+// window and are what the drawn column spans; Mean and the ±1 sample-
+// standard-deviation Low/High are carried alongside it to place the
+// gradient's midpoint and fill in the tooltip. HasRange is false below two
+// pairs, since a standard deviation needs at least two samples to mean
+// anything — Low/High then collapse onto Mean rather than showing a
+// fabricated zero-width band (Min/Max equal Mean in that case too, for the
+// same reason).
 type WindowPoint struct {
 	Label     string  `json:"label"`
 	Name      string  `json:"name"`
