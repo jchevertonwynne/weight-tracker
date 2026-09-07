@@ -66,6 +66,14 @@ if ('serviceWorker' in navigator) {
 	window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
 }
 
+// The last range copied from any picker on this page, as the JSON that was
+// put on the clipboard. The clipboard itself is the real transport — this is
+// only there for the browsers that let a page write it but not read it back
+// (Firefox before 125, and anything where the read prompt is declined), so
+// that the common case of moving a range from one tab of this app to another
+// keeps working when navigator.clipboard.readText does not.
+let copiedRangeJSON = null;
+
 // initTimeRangePicker wires up one instance of the shared Grafana-style
 // time-range-picker (templates/time_range_picker.html): a button showing
 // the active range, opening a popover of quick presets plus a custom
@@ -92,6 +100,11 @@ function initTimeRangePicker(root) {
 	const customUntilInput = root.querySelector('[data-role="custom-until"]');
 	const customApplyBtn = root.querySelector('[data-role="custom-apply"]');
 	const presetButtons = Array.from(root.querySelectorAll('.time-range-preset'));
+	const copyBtn = root.querySelector('[data-role="copy-range"]');
+	const pasteBtn = root.querySelector('[data-role="paste-range"]');
+	const clipStatus = root.querySelector('[data-role="clip-status"]');
+	const urlParam = root.dataset.urlParam;
+	const defaultRange = root.dataset.defaultRange;
 
 	// parseDateInput reads a "2026-01-01" bound as a local date rather than
 	// UTC midnight — new Date('2026-01-01') parses as UTC, which can display
@@ -203,8 +216,35 @@ function initTimeRangePicker(root) {
 		if (event.key === 'Escape' && !popover.hidden) closePopover();
 	});
 
+	// syncURL puts the applied range in the query string so a reload, a
+	// bookmark or a shared link comes back to the same view — the server
+	// reads these back on the way in (see timerange.Picker) and renders the
+	// picker and its content from them, so there is no flash of the default
+	// range before the client corrects it.
+	//
+	// A picker sitting at its own default writes nothing at all, which keeps
+	// "/" the canonical address of an untouched page rather than one URL
+	// among several that mean the same thing.
+	//
+	// replaceState rather than pushState: the back button belongs to the tabs
+	// (see the top of this file), and stepping it back through every range a
+	// user tried on the way to the one they wanted is not what it is for.
+	function syncURL() {
+		if (!urlParam) return;
+		const url = new URL(window.location.href);
+		const atDefault = rangeInput.value === defaultRange && !fromInput.value && !untilInput.value;
+		[urlParam, urlParam + '_from', urlParam + '_until'].forEach((name) => url.searchParams.delete(name));
+		if (!atDefault) {
+			url.searchParams.set(urlParam, rangeInput.value);
+			if (fromInput.value) url.searchParams.set(urlParam + '_from', fromInput.value);
+			if (untilInput.value) url.searchParams.set(urlParam + '_until', untilInput.value);
+		}
+		window.history.replaceState(null, '', url);
+	}
+
 	function apply() {
 		syncRangeLabel();
+		syncURL();
 		closePopover();
 		rangeInput.dispatchEvent(new Event('change', { bubbles: true }));
 	}
@@ -239,6 +279,128 @@ function initTimeRangePicker(root) {
 			if (event.key !== 'Enter') return;
 			event.preventDefault();
 			applyCustomRange();
+		});
+	});
+
+	// The clipboard payload is the exact range/from/until triple the form
+	// submits, so there is nothing to translate in either direction and what
+	// lands on the clipboard reads as the query the app would run.
+	function currentRangeJSON() {
+		return JSON.stringify({
+			range: rangeInput.value,
+			from: fromInput.value,
+			until: untilInput.value,
+		});
+	}
+
+	let clipStatusTimer = null;
+	function showClipStatus(message) {
+		clipStatus.textContent = message;
+		clipStatus.hidden = false;
+		clearTimeout(clipStatusTimer);
+		clipStatusTimer = setTimeout(() => {
+			clipStatus.hidden = true;
+		}, 3000);
+	}
+
+	// navigator.clipboard exists only in a secure context, which this app has
+	// over the tunnel but not when it is opened at a bare LAN address. The
+	// textarea-and-execCommand path is deprecated, and it is still the only
+	// thing that copies there.
+	function writeClipboard(text) {
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			return navigator.clipboard.writeText(text);
+		}
+		return new Promise((resolve, reject) => {
+			const scratch = document.createElement('textarea');
+			scratch.value = text;
+			scratch.setAttribute('readonly', '');
+			// Off-screen rather than hidden: a display:none textarea cannot be
+			// selected, and selecting it is the whole mechanism.
+			scratch.style.position = 'fixed';
+			scratch.style.top = '-1000px';
+			document.body.appendChild(scratch);
+			scratch.select();
+			const copied = document.execCommand('copy');
+			document.body.removeChild(scratch);
+			if (copied) {
+				resolve();
+			} else {
+				reject(new Error('execCommand copy was refused'));
+			}
+		});
+	}
+
+	// Reading is the half browsers guard hardest: Firefox withheld readText
+	// from pages entirely until 125, and Safari prompts. A null here is not
+	// an error, just a signal to fall back to the in-page copy.
+	function readClipboard() {
+		if (navigator.clipboard && navigator.clipboard.readText) {
+			return navigator.clipboard.readText().catch(() => null);
+		}
+		return Promise.resolve(null);
+	}
+
+	const presetRanges = presetButtons.map((presetBtn) => presetBtn.dataset.range);
+
+	// parseRangeJSON accepts only what this app itself emits. An unrecognized
+	// preset resolves server-side to "all time" (see timerange.Resolve) while
+	// the button would go on claiming whatever was pasted, so a range that
+	// doesn't check out is refused rather than half-applied.
+	function parseRangeJSON(text) {
+		if (!text) return null;
+		let parsed;
+		try {
+			parsed = JSON.parse(text);
+		} catch (err) {
+			return null;
+		}
+		if (!parsed || typeof parsed !== 'object') return null;
+		const range = typeof parsed.range === 'string' ? parsed.range.trim() : '';
+		const from = typeof parsed.from === 'string' ? parsed.from.trim() : '';
+		const until = typeof parsed.until === 'string' ? parsed.until.trim() : '';
+		// Bounds are free text ("now-5d", "2026-01-01", "from+5d"), so the
+		// only thing worth asserting is that they are text of a sane length.
+		if (from.length > 64 || until.length > 64) return null;
+		if (range === 'custom') {
+			return from || until ? { range, from, until } : null;
+		}
+		return presetRanges.includes(range) ? { range, from: '', until: '' } : null;
+	}
+
+	copyBtn.addEventListener('click', () => {
+		const json = currentRangeJSON();
+		copiedRangeJSON = json;
+		writeClipboard(json)
+			.then(() => showClipStatus('Range copied'))
+			// Still pasteable into the other pickers on this page, which is
+			// what it is mostly for — just not into anything outside it.
+			.catch(() => showClipStatus('Copied within this page only — the browser blocked the clipboard'));
+	});
+
+	pasteBtn.addEventListener('click', () => {
+		readClipboard().then((text) => {
+			// The clipboard wins whenever it holds a range, so a copy made in
+			// another tab or another window still lands. Anything else on it —
+			// or no read at all — falls back to the last copy made here.
+			const pasted = parseRangeJSON(text) || parseRangeJSON(copiedRangeJSON);
+			if (!pasted) {
+				showClipStatus('No range to paste');
+				return;
+			}
+			rangeInput.value = pasted.range;
+			fromInput.value = pasted.from;
+			untilInput.value = pasted.until;
+			// syncRangeLabel leaves a custom range's boxes alone on purpose,
+			// so a pasted one has to fill them itself; otherwise the popover
+			// would keep showing whatever was in them before.
+			if (pasted.range === 'custom') {
+				customFromInput.value = pasted.from;
+				customUntilInput.value = pasted.until;
+			}
+			// No success message: apply() closes the popover, and the view
+			// changing under a relabelled button is the confirmation.
+			apply();
 		});
 	});
 

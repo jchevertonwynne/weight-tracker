@@ -33,10 +33,28 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	// Matches OvernightRange's DefaultRange below, so the precomputed initial
-	// render agrees with what the picker claims to be showing.
-	overnightWindow := timerange.Resolve("30", "", "", now)
-	overnightPairs := overnight.WindowedPairs(entries, overnightWindow)
+	// Each picker's range comes off the URL, so a reload — or a shared link —
+	// lands on the same view rather than snapping back to the defaults. The
+	// parameter naming ("overnight", "overnight_from", "overnight_until") is
+	// the half of the contract the server owns; static/app.js writes the same
+	// shape back when a range is applied.
+	query := r.URL.Query()
+	picker := func(param, def string) timerange.PickerConfig {
+		return timerange.Picker(param, def, query.Get(param), query.Get(param+"_from"), query.Get(param+"_until"))
+	}
+	chartPicker := picker("chart", "30")
+	historyPicker := picker("history", "all")
+	overnightPicker := picker("overnight", "30")
+
+	// Filtering through the pickers' own windows is what guarantees the
+	// precomputed render agrees with what each picker claims to be showing.
+	// The chart needs no equivalent: it is drawn client-side from /chart,
+	// which chart-app.js requests using these same hidden inputs.
+	overnightPairs := overnight.WindowedPairs(entries, overnightPicker.Window(now))
+	// The period select has no URL parameter, so it is still at its "All"
+	// default here — an empty periodParam, exactly what RenderEntriesList
+	// would pass for it.
+	historyRows := history.FilterRows(history.BuildRows(entries), "", historyPicker.Window(now))
 	data := struct {
 		NowDate        string
 		NowTime        string
@@ -52,13 +70,13 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	}{
 		NowDate:        now.Format("2006-01-02"),
 		NowTime:        now.Format("15:04"),
-		Rows:           history.BuildRows(entries),
+		Rows:           historyRows,
 		Goals:          goals.BuildRows(goalList, now),
 		Markers:        markers.BuildRows(markerList),
 		Summary:        summary.Build(entries, now),
-		ChartRange:     timerange.PickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
-		HistoryRange:   timerange.PickerConfig{DefaultRange: "all", DefaultLabel: "All time"},
-		OvernightRange: timerange.PickerConfig{DefaultRange: "30", DefaultLabel: "Last 30 days"},
+		ChartRange:     chartPicker,
+		HistoryRange:   historyPicker,
+		OvernightRange: overnightPicker,
 		Overnight:      overnight.BuildSummary(overnightPairs),
 		Pairs:          overnightPairs,
 	}

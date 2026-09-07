@@ -559,6 +559,28 @@ select:focus {
 	flex: 0 1 auto;
 }
 
+/* Copy/paste row at the foot of the popover, separated the same way the
+   custom section is. The status line takes the full width below the two
+   buttons so a long message wraps instead of stretching the popover. */
+.time-range-clipboard {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	padding-top: 0.5rem;
+	border-top: 1px solid var(--row-border);
+}
+
+.time-range-clip-status {
+	flex: 1 0 100%;
+	margin: 0;
+	padding: 0 0.5rem;
+	font-size: 0.75rem;
+}
+
+.time-range-clip-status[hidden] {
+	display: none;
+}
+
 #weight-chart {
 	width: 100%;
 	max-height: 280px;

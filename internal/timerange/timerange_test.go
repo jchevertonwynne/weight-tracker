@@ -1,6 +1,7 @@
 package timerange
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -331,6 +332,76 @@ func TestCustomRangeCrossReferences(t *testing.T) {
 		w := Resolve("custom", "to-5d", "", now)
 		if w.HasFrom {
 			t.Error("from resolved with no until value to anchor to")
+		}
+	})
+}
+
+func TestPicker(t *testing.T) {
+	t.Run("an absent range is the picker's own default", func(t *testing.T) {
+		cfg := Picker("history", "all", "", "", "")
+		if cfg.Range != "all" || cfg.Label != "All time" {
+			t.Errorf("range/label = %q/%q, want all/All time", cfg.Range, cfg.Label)
+		}
+		if cfg.From != "" || cfg.Until != "" {
+			t.Errorf("bounds = %q/%q, want both empty", cfg.From, cfg.Until)
+		}
+	})
+
+	t.Run("a known preset is taken from the URL, with its own label", func(t *testing.T) {
+		cfg := Picker("overnight", "30", "this-year", "", "")
+		if cfg.Range != "this-year" || cfg.Label != "This year" {
+			t.Errorf("range/label = %q/%q, want this-year/This year", cfg.Range, cfg.Label)
+		}
+	})
+
+	// Resolve treats anything it doesn't know as unbounded, so accepting one
+	// of these would show all time under a button claiming otherwise.
+	t.Run("an unrecognized range falls back rather than widening the window", func(t *testing.T) {
+		for _, param := range []string{"nonsense", "7.5", "custom"} {
+			cfg := Picker("chart", "30", param, "", "")
+			if cfg.Range != "30" {
+				t.Errorf("range=%q gave %q, want the 30 default", param, cfg.Range)
+			}
+		}
+	})
+
+	t.Run("a custom range keeps its bounds", func(t *testing.T) {
+		cfg := Picker("chart", "30", "custom", "now-5d", "now")
+		if cfg.Range != "custom" || cfg.From != "now-5d" || cfg.Until != "now" {
+			t.Errorf("cfg = %+v, want a custom range of now-5d..now", cfg)
+		}
+	})
+
+	t.Run("one bound is enough for a custom range", func(t *testing.T) {
+		cfg := Picker("chart", "30", "custom", "", "2026-01-01")
+		if cfg.Range != "custom" || cfg.Until != "2026-01-01" {
+			t.Errorf("cfg = %+v, want a custom range bounded only above", cfg)
+		}
+	})
+
+	t.Run("an over-long bound is refused", func(t *testing.T) {
+		cfg := Picker("chart", "30", "custom", strings.Repeat("x", maxBoundLen+1), "now")
+		if cfg.Range != "30" {
+			t.Errorf("range = %q, want the 30 default", cfg.Range)
+		}
+	})
+
+	t.Run("Window resolves what the picker says it is showing", func(t *testing.T) {
+		today := at(t, "2026-08-16 14:30")
+		cfg := Picker("overnight", "30", "7", "", "")
+		if got := cfg.Window(today).From.Format("2006-01-02"); got != "2026-08-10" {
+			t.Errorf("window from = %s, want 2026-08-10", got)
+		}
+	})
+
+	t.Run("every preset the popover offers has a label", func(t *testing.T) {
+		for _, p := range Presets {
+			if p.Range == "" || p.Label == "" {
+				t.Errorf("preset %+v is missing a value or a label", p)
+			}
+			if cfg := Picker("chart", "30", p.Range, "", ""); cfg.Range != p.Range {
+				t.Errorf("preset %q was not accepted from the URL", p.Range)
+			}
 		}
 	})
 }

@@ -11,14 +11,95 @@ import (
 	"time"
 )
 
-// PickerConfig configures one instance of the shared "time-range-picker"
-// template partial (see templates/time_range_picker.html) — the chart, the
-// history filter, and the overnight filter each embed their own, with
-// different defaults, since a chart benefits from a bounded default view
-// but a list is more useful starting unfiltered.
+// Preset is one entry in the picker's quick-range list. The list lives here
+// rather than as markup in the template because the server has to answer the
+// same questions the popover does — which ranges exist, and what each is
+// called — when it renders a picker from the URL.
+type Preset struct {
+	Range string
+	Label string
+}
+
+var Presets = []Preset{
+	{"7", "Last 7 days"},
+	{"30", "Last 30 days"},
+	{"90", "Last 90 days"},
+	{"365", "Last year"},
+	{"this-year", "This year"},
+	{"all", "All time"},
+}
+
+func presetLabel(rangeParam string) (string, bool) {
+	for _, p := range Presets {
+		if p.Range == rangeParam {
+			return p.Label, true
+		}
+	}
+	return "", false
+}
+
+// customLabel is what a custom range's button reads before static/app.js
+// initialises; the client immediately rewrites it from the bounds, which it
+// can format far better (a bare date becomes "Jan 5, 2026", a relative
+// expression stays verbatim).
+const customLabel = "Custom range"
+
+// maxBoundLen caps a custom bound coming off the URL. Bounds are free text —
+// a date, "now-5d", "from+5d" — so length is the only thing worth asserting,
+// and an unbounded one would otherwise be echoed into three attributes of
+// the rendered page. Matches the cap parseRangeJSON applies to a pasted
+// range in static/app.js.
+const maxBoundLen = 64
+
+// PickerConfig is the state of one instance of the shared
+// "time-range-picker" template partial (see templates/time_range_picker.html)
+// — the chart, the history filter, and the overnight filter each embed their
+// own, with different defaults, since a chart benefits from a bounded
+// default view but a list is more useful starting unfiltered.
 type PickerConfig struct {
-	DefaultRange string // preset value ("30", "all", ...) selected by default
-	DefaultLabel string // the button's initial text, matching DefaultRange
+	Param   string // URL query parameter this instance reads and writes
+	Default string // preset shown when the URL says nothing about it
+	Range   string // the active preset value ("30", "all", ...), or "custom"
+	Label   string // the button's text, matching Range
+	From    string // custom bounds, empty unless Range is "custom"
+	Until   string
+	Presets []Preset // the popover's quick list
+}
+
+// Picker builds one picker's state from the URL, falling back to def when
+// the range parameter is absent — so a bare "/" is every picker at its own
+// default, and only a range that differs from it needs to appear in the URL
+// at all.
+//
+// An unrecognized range falls back to def as well. Resolve treats anything
+// it doesn't know as unbounded, so a hand-edited or truncated link would
+// otherwise quietly show all time under a button still claiming something
+// else — the same silent widening static/app.js refuses on a pasted range.
+func Picker(param, def, rangeParam, fromParam, untilParam string) PickerConfig {
+	cfg := PickerConfig{Param: param, Default: def, Range: def, Presets: Presets}
+	if rangeParam == "custom" && (fromParam != "" || untilParam != "") &&
+		len(fromParam) <= maxBoundLen && len(untilParam) <= maxBoundLen {
+		cfg.Range, cfg.From, cfg.Until = "custom", fromParam, untilParam
+		cfg.Label = customLabel
+		return cfg
+	}
+	if _, ok := presetLabel(rangeParam); ok {
+		cfg.Range = rangeParam
+	}
+	if label, ok := presetLabel(cfg.Range); ok {
+		cfg.Label = label
+	} else {
+		cfg.Label = cfg.Range
+	}
+	return cfg
+}
+
+// Window resolves what the picker is actually showing. Rendering a page's
+// content through this rather than through a separately-parsed set of query
+// parameters is what keeps the content and the button that describes it from
+// disagreeing.
+func (c PickerConfig) Window(now time.Time) Window {
+	return Resolve(c.Range, c.From, c.Until, now)
 }
 
 // Window is a resolved visible-range bound. Either side may be unbounded
