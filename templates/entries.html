@@ -83,6 +83,7 @@
 		hx-target="#entries-list"
 		hx-swap="outerHTML"
 		hx-include="#entries-filter"
+		hx-disabled-elt="find button[type='submit']"
 		hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('log-dialog').close(); }">
 		<label class="field">
 			<span>Weight (kg)</span>

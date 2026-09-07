@@ -56,6 +56,18 @@ document.getElementById('log-fab').addEventListener('click', () => {
 });
 document.getElementById('log-cancel').addEventListener('click', () => logDialog.close());
 
+// Click outside to dismiss. A backdrop click lands on the dialog element
+// itself, but so does a click on the card's own padding, hence the rect
+// check — and a keyboard-activated button reports (0, 0), which the target
+// check keeps from reading as a click on the backdrop.
+logDialog.addEventListener('click', (event) => {
+	if (event.target !== logDialog) return;
+	const box = logDialog.getBoundingClientRect();
+	const outside = event.clientX < box.left || event.clientX > box.right ||
+		event.clientY < box.top || event.clientY > box.bottom;
+	if (outside) logDialog.close();
+});
+
 const confirmInput = document.getElementById('confirm-delete-input');
 const confirmBtn = document.getElementById('confirm-delete-btn');
 confirmInput.addEventListener('input', () => {

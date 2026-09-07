@@ -308,6 +308,38 @@ select:focus {
 	cursor: not-allowed;
 }
 
+/* A submit whose request is in flight. htmx puts .htmx-request on the form
+   for the life of the request, and hx-disabled-elt disables the button, so
+   the pair says "your tap landed, it's working" on a slow save instead of
+   leaving the button looking untouched. */
+form.htmx-request button[type="submit"] {
+	opacity: 0.7;
+	cursor: progress;
+}
+
+form.htmx-request button[type="submit"]::before {
+	content: "";
+	display: inline-block;
+	width: 0.85em;
+	height: 0.85em;
+	margin-right: 0.5em;
+	vertical-align: -0.1em;
+	border: 2px solid currentColor;
+	border-top-color: transparent;
+	border-radius: 50%;
+	animation: btn-spin 0.6s linear infinite;
+}
+
+@keyframes btn-spin {
+	to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	form.htmx-request button[type="submit"]::before {
+		animation-duration: 1.8s;
+	}
+}
+
 .empty {
 	color: var(--on-surface-muted);
 	font-style: italic;
