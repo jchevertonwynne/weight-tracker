@@ -753,3 +753,77 @@ func TestIndexDoesNotWriteAPartialPage(t *testing.T) {
 		t.Errorf("response does not end with </html>; a partial page was sent:\n...%s", body[max(0, len(body)-200):])
 	}
 }
+
+// Regression: static assets are served from an embed.FS, whose files
+// report a zero modtime, so http.FileServerFS sent no Last-Modified and Go
+// generates no ETag — the responses had no validator and no Cache-Control
+// at all. Browsers applied heuristic freshness and kept serving the old
+// JavaScript after a deploy while the server-rendered HTML updated, which
+// left the page running half on each version.
+func TestStaticAssetsAreRevalidatable(t *testing.T) {
+	s := newTestServer(t)
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+
+	const asset = "/static/chart-app.js"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, asset, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag, so a browser has nothing to revalidate with")
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want no-cache", got)
+	}
+	if rec.Body.Len() == 0 {
+		t.Error("empty body")
+	}
+
+	t.Run("a matching ETag is answered 304, not resent", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, asset, nil)
+		req.Header.Set("If-None-Match", etag)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotModified {
+			t.Errorf("status = %d, want 304", rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("body = %d bytes, want none on a 304", rec.Body.Len())
+		}
+	})
+
+	t.Run("a stale ETag gets the new bytes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, asset, nil)
+		req.Header.Set("If-None-Match", `"an-earlier-build"`)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+		if rec.Body.Len() == 0 {
+			t.Error("empty body")
+		}
+	})
+
+	// Two assets sharing an ETag would let a browser satisfy one from the
+	// other's cache entry.
+	t.Run("each asset has its own ETag", func(t *testing.T) {
+		seen := map[string]string{}
+		for _, path := range []string{"/static/chart-app.js", "/static/app.js", "/static/style.css", "/static/sw.js"} {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			tag := rec.Header().Get("ETag")
+			if tag == "" {
+				t.Errorf("%s has no ETag", path)
+				continue
+			}
+			if other, clash := seen[tag]; clash {
+				t.Errorf("%s and %s share the ETag %s", path, other, tag)
+			}
+			seen[tag] = path
+		}
+	})
+}
