@@ -721,6 +721,126 @@ function calendarTicks(axis) {
 		return gradient;
 	}
 
+	// The three figures a column is built from, drawn beside it: the worst
+	// night on record at the top, the average in the middle, the best at the
+	// bottom. They were tooltip-only, which meant the numbers the whole card
+	// is about could only be read by hovering — a pointer-only affordance
+	// that doesn't exist on the phone this mostly gets used on. The tooltip
+	// keeps what a static label can't carry: the odds at each edge, the ±1 SD
+	// figure, and how many nights are behind it.
+	const valueLabelFontPx = 11;
+	const valueLabelFace = '"Roboto", "Segoe UI", system-ui, -apple-system, sans-serif';
+	// Enough for an 11px line plus air. Labels closer than this to each other
+	// read as one smudged number rather than three.
+	const valueLabelGapPx = 14;
+	// Between the column edge and the text, and between the text and the edge
+	// of the plot area.
+	const valueLabelPadPx = 6;
+
+	function drawColumnValueLabels(chartInstance, points, targetKg) {
+		const { ctx, chartArea, scales } = chartInstance;
+		const meta = chartInstance.getDatasetMeta(0);
+		// Un-projected the columns are overnight changes, where the sign is
+		// the point and a "+" earns its place; projected they are absolute
+		// bedtime weights, where it would only be noise.
+		const projected = typeof targetKg === 'number' && Number.isFinite(targetKg);
+		const format = (value) => (!projected && value > 0 ? '+' : '') + value.toFixed(1);
+
+		// How much clear space a column has beside it: half the slot it sits
+		// in, less half the bar. Taken from the gap between two categories
+		// where there are two, since that is the real spacing, and from the
+		// plot width when a single column has the panel to itself.
+		const firstElement = meta && meta.data && meta.data[0];
+		const barWidth = (firstElement && firstElement.width) || 40;
+		const categoryWidthPx = points.length > 1
+			? Math.abs(scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0))
+			: chartArea.width;
+		const sideRoomPx = categoryWidthPx / 2 - barWidth / 2;
+
+		ctx.save();
+		ctx.textBaseline = 'middle';
+		// The halo is stroked under the fill, so a round join keeps it from
+		// growing spikes off the corners of the glyphs.
+		ctx.lineJoin = 'round';
+		ctx.miterLimit = 2;
+
+		points.forEach((p, i) => {
+			const element = meta && meta.data && meta.data[i];
+			const halfWidth = ((element && element.width) || 40) / 2;
+			const x = scales.x.getPixelForValue(i);
+			// Rounded to a tenth, two of the three often come out as the same
+			// number — always so for a single logged night, where min, mean
+			// and max are one value — and printing it twice reads as a bug
+			// rather than as a narrow column. The mean is the one kept when
+			// they tie: it is the figure the column's colour turns on. Sorted
+			// back into top-down order afterwards, which is what the collision
+			// pass below assumes.
+			const seen = new Set();
+			const labels = [
+				{ text: format(p.meanKg), y: scales.y.getPixelForValue(p.meanKg), bold: true },
+				{ text: format(p.maxKg), y: scales.y.getPixelForValue(p.maxKg), bold: false },
+				{ text: format(p.minKg), y: scales.y.getPixelForValue(p.minKg), bold: false },
+			].filter((label) => {
+				if (seen.has(label.text)) return false;
+				seen.add(label.text);
+				return true;
+			});
+			labels.sort((a, b) => a.y - b.y);
+
+			// A short column — or a single logged night, where all three
+			// collapse onto one pixel — would stack the numbers on top of each
+			// other. Push each one below its neighbour, then lift the whole
+			// block back inside the plot area if that pushed the last one out.
+			for (let j = 1; j < labels.length; j += 1) {
+				labels[j].y = Math.max(labels[j].y, labels[j - 1].y + valueLabelGapPx);
+			}
+			const overflow = labels[labels.length - 1].y - (chartArea.bottom - valueLabelPadPx);
+			if (overflow > 0) labels.forEach((label) => { label.y -= overflow; });
+			const underflow = chartArea.top + valueLabelPadPx - labels[0].y;
+			if (underflow > 0) labels.forEach((label) => { label.y += underflow; });
+
+			// Beside the column where there is room for it, which is where the
+			// number sits closest to the edge it names. Measured with the
+			// regular face; the bold mean is a shade wider, which the padding
+			// absorbs.
+			ctx.font = valueLabelFontPx + 'px ' + valueLabelFace;
+			const widest = labels.reduce((max, label) => Math.max(max, ctx.measureText(label.text).width), 0);
+			const needed = widest + valueLabelPadPx * 2;
+			// A phone fits four columns into the width a laptop gives one, and
+			// the gap beside a bar stops being wide enough for a number long
+			// before the plot edge does — left alone, each column's labels ran
+			// into its neighbour's. Where the gap is too tight the number goes
+			// over the column instead: the halo below cuts it out of the
+			// gradient, and 40px of bar is wider than "111.1".
+			const beside = sideRoomPx >= needed;
+			let labelX = x;
+			if (beside) {
+				// Right by default, flipping to the left for the last column
+				// rather than running off the plot.
+				const onRight = x + halfWidth + needed <= chartArea.right;
+				ctx.textAlign = onRight ? 'left' : 'right';
+				labelX = onRight ? x + halfWidth + valueLabelPadPx : x - halfWidth - valueLabelPadPx;
+			} else {
+				ctx.textAlign = 'center';
+			}
+
+			labels.forEach((label) => {
+				// The mean is the coin flip, so it carries the weight the
+				// black line across the column already claims.
+				ctx.font = (label.bold ? '600 ' : '') + valueLabelFontPx + 'px ' + valueLabelFace;
+				// These sit over the gradient, the faint verdict bands and the
+				// grid by turns, so the text is haloed in the card colour
+				// rather than trusted to contrast with whatever is behind it.
+				ctx.lineWidth = 3;
+				ctx.strokeStyle = cssVar('--surface');
+				ctx.strokeText(label.text, labelX, label.y);
+				ctx.fillStyle = cssVar('--on-surface');
+				ctx.fillText(label.text, labelX, label.y);
+			});
+		});
+		ctx.restore();
+	}
+
 	// overnightRangeBandsPlugin extends each column past the range it was
 	// actually built from — solid green below the best night on record, solid
 	// red above the worst — and draws the target line. All three are things a
@@ -796,6 +916,7 @@ function calendarTicks(axis) {
 					ctx.stroke();
 				});
 				ctx.restore();
+				drawColumnValueLabels(chartInstance, points, targetKg);
 			}
 
 			if (typeof targetKg !== 'number' || !Number.isFinite(targetKg)) return;
