@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -37,6 +38,16 @@ var templatesFS embed.FS
 var staticFS embed.FS
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run exists so that the deferred shutdowns below actually happen. log.Fatal
+// calls os.Exit, which skips every pending defer, so putting the fatal
+// startup paths in main and everything else here means a failure to open the
+// database no longer discards the tracing flush on its way out.
+func run() error {
 	addr := flag.String("addr", ":8080", "listen address")
 	dbPath := flag.String("db", "weight-tracker.db", "path to sqlite database file")
 	otelEndpoint := flag.String("otel-endpoint", "", "host:port of an OTLP/gRPC trace collector; tracing is disabled if empty")
@@ -51,13 +62,17 @@ func main() {
 	// traffic volume; the exporter still flushes on its own timer.
 	shutdownTracing, err := tracing.Init(context.Background(), "weight-tracker", *otelEndpoint)
 	if err != nil {
-		log.Fatalf("init tracing: %v", err)
+		return fmt.Errorf("init tracing: %w", err)
 	}
-	defer shutdownTracing(context.Background())
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			log.Printf("shutdown tracing: %v", err)
+		}
+	}()
 
 	sqlDB, err := db.Open(*dbPath)
 	if err != nil {
-		log.Fatalf("open database: %v", err)
+		return fmt.Errorf("open database: %w", err)
 	}
 	defer sqlDB.Close()
 
@@ -68,7 +83,7 @@ func main() {
 
 	journalMode, err := db.JournalMode(sqlDB)
 	if err != nil {
-		log.Fatalf("read journal mode: %v", err)
+		return fmt.Errorf("read journal mode: %w", err)
 	}
 	if journalMode != "wal" {
 		// Not fatal — the rollback journal is still correct — but worth
@@ -79,7 +94,5 @@ func main() {
 
 	log.Printf("weight-tracker listening on %s (db: %s, journal: %s)", *addr, *dbPath, journalMode)
 	handler := tracing.Middleware("weight-tracker", metrics.Instrument(mux))
-	if err := http.ListenAndServe(*addr, handler); err != nil {
-		log.Fatal(err)
-	}
+	return http.ListenAndServe(*addr, handler)
 }

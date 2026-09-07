@@ -110,7 +110,9 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write([]byte("ok\n"))
+	if _, err := w.Write([]byte("ok\n")); err != nil {
+		log.Printf("write healthz response: %v", err)
+	}
 }
 
 // HandleChart returns chart data as JSON for the client-side Chart.js
@@ -159,5 +161,7 @@ func (s *Server) HandleServiceWorker(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Write(b)
+	if _, err := w.Write(b); err != nil {
+		log.Printf("write service worker: %v", err)
+	}
 }

@@ -8,6 +8,7 @@ package importer
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -130,7 +131,7 @@ func Parse(r io.Reader, unit string) (Result, error) {
 	for {
 		lineNumber++
 		record, err := cr.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

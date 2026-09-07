@@ -35,10 +35,10 @@ func TestInstrumentDefaultsStatusTo200(t *testing.T) {
 	handler := Instrument(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handler never calls WriteHeader — net/http implicitly sends 200
 		// on the first Write, and statusWriter must default the same way.
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 
-	req := httptest.NewRequest("TRACE", "/whatever", nil)
+	req := httptest.NewRequest(http.MethodTrace, "/whatever", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -59,7 +59,7 @@ func TestInstrumentLabelsByMuxPattern(t *testing.T) {
 	})
 	handler := Instrument(mux)
 
-	req := httptest.NewRequest("GET", "/widgets/42", nil)
+	req := httptest.NewRequest(http.MethodGet, "/widgets/42", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -85,7 +85,7 @@ func TestInstrumentFallsBackToExtraRouterPattern(t *testing.T) {
 
 	handler := Instrument(outer, inner)
 
-	req := httptest.NewRequest("GET", "/collections/groceries", nil)
+	req := httptest.NewRequest(http.MethodGet, "/collections/groceries", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -112,6 +112,6 @@ func TestHandlerExposesInFlightGauge(t *testing.T) {
 func renderMetrics(t *testing.T) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	return rec.Body.String()
 }

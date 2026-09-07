@@ -66,6 +66,34 @@ jobs:
             echo "::endgroup::"
           done
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    env:
+      # Kept in step with the Makefile's own pin by the check below, so a
+      # local 'make lint' and this job can never apply different rules.
+      GOLANGCI_LINT_VERSION: v2.13.2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Pinned linter version matches the Makefile
+        run: |
+          pinned=$(sed -n 's/^GOLANGCI_LINT_VERSION := //p' Makefile)
+          if [ "$pinned" != "$GOLANGCI_LINT_VERSION" ]; then
+            echo "Makefile pins golangci-lint $pinned, this workflow pins $GOLANGCI_LINT_VERSION."
+            echo "Bump both together."
+            exit 1
+          fi
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
   build:
     name: Build
     runs-on: ubuntu-latest

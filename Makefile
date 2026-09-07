@@ -5,6 +5,14 @@ BIN_DIR  := bin
 PID_FILE := $(BIN_DIR)/$(BINARY).pid
 LOG_FILE := $(BIN_DIR)/$(BINARY).log
 
+# Pinned, and installed into bin/ rather than taken from PATH, so a local
+# run and CI apply the same rules with the same linter. Bumping this changes
+# the binary's path, which is what makes the next 'make lint' fetch the new
+# version instead of quietly reusing the old one — keep it in step with
+# .github/workflows/ci.yml.
+GOLANGCI_LINT_VERSION := v2.13.2
+GOLANGCI_LINT         := $(BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+
 # What 'make start' polls to decide the daemon is actually serving. Override
 # alongside ADDR if you bind to something localhost can't reach.
 HEALTH_URL ?= http://localhost$(ADDR)/
@@ -12,7 +20,7 @@ HEALTH_URL ?= http://localhost$(ADDR)/
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
 
-.PHONY: run build build-pi start stop restart status logs clean fmt vet tidy test check deploy deploy-tunnel help
+.PHONY: run build build-pi start stop restart status logs clean fmt vet lint tidy test check deploy deploy-tunnel help
 
 help:
 	@echo "make run           - go run the app locally on $(ADDR), attached to this terminal"
@@ -27,9 +35,10 @@ help:
 	@echo "make deploy-tunnel - retired; the tunnels run as pods, see the homelab repo"
 	@echo "make clean         - stop the daemon, then remove build output and the local dev database"
 	@echo "make test          - go test ./... with the race detector"
-	@echo "make check         - everything CI runs: gofmt check, vet, tests"
+	@echo "make check         - everything CI runs: gofmt check, vet, lint, tests"
 	@echo "make fmt           - gofmt all source files"
 	@echo "make vet           - go vet ./..."
+	@echo "make lint          - golangci-lint run (installs $(GOLANGCI_LINT_VERSION) into $(BIN_DIR)/ first)"
 	@echo "make tidy          - go mod tidy"
 
 run:
@@ -125,12 +134,13 @@ test:
 	go test -race -cover ./...
 
 # Mirrors the CI workflow, so a green 'make check' locally means a green CI.
-check:
+check: $(GOLANGCI_LINT)
 	@unformatted=`gofmt -l .`; \
 	if [ -n "$$unformatted" ]; then \
 		echo "these files need gofmt:"; echo "$$unformatted"; exit 1; \
 	fi
 	go vet ./...
+	$(GOLANGCI_LINT) run
 	go test -race -cover ./...
 
 fmt:
@@ -138,6 +148,14 @@ fmt:
 
 vet:
 	go vet ./...
+
+lint: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) run
+
+$(GOLANGCI_LINT):
+	mkdir -p $(BIN_DIR)
+	GOBIN=$(CURDIR)/$(BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	mv $(BIN_DIR)/golangci-lint $@
 
 tidy:
 	go mod tidy

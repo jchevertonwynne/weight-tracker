@@ -1,0 +1,55 @@
+version: "2"
+
+# Everything in the standard set, plus a handful chosen for what this app
+# actually does: it talks to database/sql, serves HTTP, and wraps errors on
+# the way back up. Linters that mostly generate style arguments are left off
+# — the point is to catch bugs the compiler and the tests can't.
+linters:
+  default: standard
+  enable:
+    # database/sql: rows.Err() unchecked, and Rows/Stmt left unclosed. The
+    # whole persistence layer is hand-rolled around this package.
+    - rowserrcheck
+    - sqlclosecheck
+    # Response bodies left open in the handlers and in the test client.
+    - bodyclose
+    # Errors compared with == or type-asserted rather than errors.Is/As,
+    # which silently stops matching the moment something is wrapped with %w.
+    - errorlint
+    # Returning nil after checking err != nil.
+    - nilerr
+    - copyloopvar
+    - unconvert
+    - usestdlibvars
+    - misspell
+    - gocritic
+
+  settings:
+    errcheck:
+      exclude-functions:
+        # A rollback is the deferred cleanup path, not the outcome: once the
+        # transaction has committed it returns sql.ErrTxDone by design, and
+        # when it fires after a failed statement the error being returned is
+        # the one that matters. Checking it at every site would only produce
+        # three identical discards.
+        - (*database/sql.Tx).Rollback
+    staticcheck:
+      checks:
+        - all
+        # QF1001 (apply De Morgan's law) rewrites conditions for their own
+        # sake: "!hasDatetime && !(hasDate && hasTime)" states the rule the
+        # importer actually has. The QF checks are refactoring suggestions,
+        # not defect reports.
+        - -QF1001
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+
+formatters:
+  enable:
+    - gofmt

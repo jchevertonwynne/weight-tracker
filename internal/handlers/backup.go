@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -64,6 +65,8 @@ func (s *Server) HandleBackup(w http.ResponseWriter, r *http.Request) {
 
 	// A copy failure here is almost always the client going away, and the
 	// headers are already sent, so there is no status code left to change —
-	// just stop.
-	io.Copy(w, f)
+	// log it and stop.
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("stream backup: %v", err)
+	}
 }
