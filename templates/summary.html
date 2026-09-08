@@ -19,6 +19,27 @@
 		{{else}}
 			<p class="empty">Not enough data from last week yet for a comparison.</p>
 		{{end}}
+		{{if .Goal.HasGoal}}
+			{{if .Goal.Reached}}
+				<div class="stat-tile">
+					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
+					<span class="chip chip-loss">Reached</span>
+				</div>
+			{{else}}
+				<div class="stat-tile">
+					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
+					<span class="stat-value">{{.Goal.RemainingStr}}</span>
+				</div>
+				{{if .Goal.ETALabel}}
+					<div class="stat-tile">
+						<span class="stat-label">Estimated</span>
+						<span class="stat-value">{{.Goal.ETALabel}}</span>
+					</div>
+				{{else}}
+					<p class="empty">{{.Goal.Stalled}}</p>
+				{{end}}
+			{{end}}
+		{{end}}
 	</div>
 {{end}}
 {{end}}

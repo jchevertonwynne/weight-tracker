@@ -13,7 +13,12 @@ func (s *Server) HandleSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := summary.Build(entries, s.now())
+	goalList, err := db.ListGoals(r.Context(), s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := summary.Build(entries, goalList, s.now())
 	if err := s.tmpl.ExecuteTemplate(w, "summary", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

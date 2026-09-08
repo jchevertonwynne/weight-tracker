@@ -73,7 +73,7 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		Rows:           historyRows,
 		Goals:          goals.BuildRows(goalList, now),
 		Markers:        markers.BuildRows(markerList),
-		Summary:        summary.Build(entries, now),
+		Summary:        summary.Build(entries, goalList, now),
 		ChartRange:     chartPicker,
 		HistoryRange:   historyPicker,
 		OvernightRange: overnightPicker,
