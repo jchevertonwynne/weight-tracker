@@ -1,8 +1,6 @@
-// Package tracing wires up OpenTelemetry distributed tracing: spans are
-// exported over OTLP/gRPC to Alloy's in-cluster receiver, which forwards
-// them to Grafana Cloud Tempo. There is no local exporter and no sampling
-// decision made here beyond "always sample" — Alloy is the only hop, and
-// data volume at this app's traffic is nowhere near worth trimming.
+// Package tracing exports spans over OTLP/gRPC to Alloy's in-cluster
+// receiver, which forwards them to Grafana Cloud Tempo. Always sampled —
+// Alloy is the only hop and the traffic here is nowhere near worth trimming.
 package tracing
 
 import (
@@ -19,17 +17,13 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// Init configures the global TracerProvider to batch spans to endpoint
-// (host:port of Alloy's OTLP/gRPC receiver) over a plaintext connection —
-// everything between here and Alloy stays inside the cluster network, so
-// there is no TLS hop to terminate. Passing an empty endpoint is a no-op:
-// the global provider is left as OpenTelemetry's default no-op tracer, so
-// the app runs unchanged with no collector reachable, such as in local dev.
+// Init points the global TracerProvider at endpoint (host:port of Alloy's
+// OTLP/gRPC receiver), plaintext because it never leaves the cluster network.
+// An empty endpoint is a no-op, leaving the no-op tracer in place for local
+// dev.
 //
-// The returned func flushes and closes the exporter; callers should defer
-// it (with a fresh, short-lived context — the one passed to Init may
-// already be cancelled by shutdown) so in-flight spans aren't dropped on
-// exit.
+// Defer the returned func with a fresh context — the one passed here may
+// already be cancelled by shutdown — or the last batch of spans is dropped.
 func Init(ctx context.Context, serviceName, endpoint string) (func(context.Context) error, error) {
 	if endpoint == "" {
 		return func(context.Context) error { return nil }, nil
@@ -55,18 +49,15 @@ func Init(ctx context.Context, serviceName, endpoint string) (func(context.Conte
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
-	// W3C traceparent: lets a trace that arrives with one (e.g. hand-added
-	// by Cloudflare in front) continue rather than starting a new root, and
-	// is what any future downstream call from this app would propagate.
+	// W3C traceparent, so a trace arriving with one continues rather than
+	// starting a new root.
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	return tp.Shutdown, nil
 }
 
-// Middleware wraps h so every request gets a server span, named after
-// serviceName. otelhttp reads/writes the W3C traceparent header and records
-// standard HTTP semantic-convention attributes (method, route, status)
-// without each handler having to do it by hand.
+// Middleware gives every request a server span and records the standard HTTP
+// semantic-convention attributes.
 func Middleware(serviceName string, h http.Handler) http.Handler {
 	return otelhttp.NewHandler(h, serviceName)
 }

@@ -10,8 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// record logs one message through the trace handler and returns the decoded
-// JSON, which is the form Alloy hands to Loki.
+// record logs through the trace handler and decodes the JSON Alloy would ship.
 func record(t *testing.T, ctx context.Context) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
@@ -40,8 +39,7 @@ func TestAttachesTraceIDsFromContext(t *testing.T) {
 	if got["span_id"] != spanID.String() {
 		t.Errorf("span_id = %v, want %s", got["span_id"], spanID)
 	}
-	// The joinable pair is only half of it: the static message and the level
-	// are what a Loki query selects on in the first place.
+	// The level and static message are what a Loki query selects on.
 	if got["msg"] != "encode response" {
 		t.Errorf("msg = %v, want a static message", got["msg"])
 	}
@@ -50,9 +48,7 @@ func TestAttachesTraceIDsFromContext(t *testing.T) {
 	}
 }
 
-// An invalid span context must contribute nothing. Startup and shutdown lines
-// have no span, and an all-zero trace id would make every one of them a link
-// to a trace that does not exist.
+// Startup and shutdown lines have no span; all-zero ids would be a dead link.
 func TestOmitsTraceIDsWithoutASpan(t *testing.T) {
 	got := record(t, context.Background())
 	if _, ok := got["trace_id"]; ok {
@@ -63,9 +59,7 @@ func TestOmitsTraceIDsWithoutASpan(t *testing.T) {
 	}
 }
 
-// slog.With returns a derived handler. The embedded slog.Handler's own
-// WithAttrs would return the inner JSON handler and drop the trace wrapper
-// with it, which loses the ids for every call site that pre-binds attributes.
+// slog.With goes through WithAttrs, which must rewrap or the ids are lost.
 func TestDerivedLoggersKeepTraceIDs(t *testing.T) {
 	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a}
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
