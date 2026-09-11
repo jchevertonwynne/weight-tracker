@@ -71,11 +71,14 @@ func run() error {
 		// telling you to go and read the flags.
 		slog.Warn("-dev-user is set; every request without an Access header is treated as that user")
 	}
-	if !allow.Configured() {
-		// Not fatal yet. This app is being given its allowlist in two steps —
-		// the flag first, then the ConfigMap that fills it — because a pod
-		// whose image does not yet know a flag refuses to start at all.
-		slog.Warn("-allowed-emails is empty; anyone Cloudflare Access admits can use this app, including a session issued before someone was removed from the policy")
+	if err := allow.Check(); err != nil {
+		// Fatal, like a database that will not open. The allowlist is this
+		// app's entire authorisation model, so an empty one admits everyone
+		// Access admits — including a session issued before someone was taken
+		// off the policy, which is the case it exists for. In production that
+		// state means the ConfigMap never reached the flag, and a pod that
+		// crashloops says so where a pod serving everybody does not.
+		return fmt.Errorf("access config: %w (pass -allowed-emails, or -dev-user for a local run)", err)
 	}
 
 	go profiling.ListenAndServe(*pprofAddr)
