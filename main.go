@@ -3,14 +3,11 @@ package main
 import (
 	"context"
 	"embed"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	// Embeds the IANA timezone database in the binary, used only when the
@@ -28,12 +25,14 @@ import (
 	// embedding provides the data, TZ chooses which zone.
 	_ "time/tzdata"
 
+	"github.com/jchevertonwynne/homelab-go/logging"
+	"github.com/jchevertonwynne/homelab-go/metrics"
+	"github.com/jchevertonwynne/homelab-go/profiling"
+	"github.com/jchevertonwynne/homelab-go/serve"
+	"github.com/jchevertonwynne/homelab-go/tracing"
+
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/handlers"
-	"weight-tracker/internal/logging"
-	"weight-tracker/internal/metrics"
-	"weight-tracker/internal/profiling"
-	"weight-tracker/internal/tracing"
 )
 
 //go:embed templates/*.html
@@ -99,46 +98,9 @@ func run() error {
 		slog.Warn("journal mode is not WAL", "journal_mode", journalMode)
 	}
 
-	srv := &http.Server{
-		Addr:    *addr,
-		Handler: tracing.Middleware("weight-tracker", metrics.Instrument(mux)),
-		// A service reachable from the internet needs these. Without
-		// ReadHeaderTimeout a single client can hold a connection open
-		// indefinitely by dribbling out headers.
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-
-	// Kubernetes sends SIGTERM and waits terminationGracePeriodSeconds
-	// before SIGKILL. Anything that must be flushed on the way out — here
-	// the tracing shutdown deferred above — happens after Shutdown returns.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Buffered: a listener that fails after the signal has already been
-	// caught has nobody left reading this channel, and an unbuffered send
-	// would then block this goroutine forever.
-	serveErr := make(chan error, 1)
-	go func() {
-		slog.Info("listening", "addr", *addr, "db", *dbPath, "journal_mode", journalMode)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serveErr <- err
-		}
-	}()
-
-	select {
-	case err := <-serveErr:
+	if err := serve.Run(*addr, tracing.Middleware("weight-tracker", metrics.Instrument(mux)),
+		serve.WithLogAttrs("db", *dbPath, "journal_mode", journalMode)); err != nil {
 		return fmt.Errorf("serve: %w", err)
-	case <-ctx.Done():
-	}
-
-	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
 	}
 	return nil
 }

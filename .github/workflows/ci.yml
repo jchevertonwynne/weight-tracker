@@ -26,13 +26,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # vendor/ is excluded: gofmt recurses into directory arguments, so a bare
+      # `gofmt -l .` reports the vendored dependencies, which are not ours to
+      # format.
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l .)
+          files=$(find . -name '*.go' -not -path './vendor/*')
+          unformatted=$(gofmt -l $files)
           if [ -n "$unformatted" ]; then
             echo "These files need gofmt:"
             echo "$unformatted"
-            gofmt -d .
+            gofmt -d $files
             exit 1
           fi
 
