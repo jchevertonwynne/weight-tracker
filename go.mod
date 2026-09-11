@@ -3,7 +3,7 @@ module weight-tracker
 go 1.26.5
 
 require (
-	github.com/jchevertonwynne/homelab-go v0.1.0
+	github.com/jchevertonwynne/homelab-go v0.1.1
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
 	modernc.org/sqlite v1.56.0

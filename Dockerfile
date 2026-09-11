@@ -4,16 +4,12 @@
 
 FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 WORKDIR /src
-
-# No `go mod download` step, and this is not an optimisation that was dropped.
-# homelab-go is a private module, so a download here fails outright - the
-# builder has no credential and git gives up with "could not read Username for
-# https://github.com". It also runs before the source arrives, so vendor/ is
-# not even present to satisfy it.
-#
-# vendor/ is committed precisely so this never needs one. With it in the tree
-# `go build` selects -mod=vendor on its own and touches the network zero times,
-# which is also why there is nothing left to cache in a separate layer.
+# Module files before the source, so the download layer caches across source
+# edits. Worth a layer now: the graph pulls OpenTelemetry, gRPC and the
+# Prometheus client, and homelab-go resolves from the public proxy like
+# everything else, so nothing here needs a credential.
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 
 # CGO_ENABLED=0 is what makes the FROM scratch stage below possible, and it

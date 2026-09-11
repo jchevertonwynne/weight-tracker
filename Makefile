@@ -133,15 +133,9 @@ clean: stop
 test:
 	go test -race -cover ./...
 
-# GOFILES excludes vendor/. gofmt takes directories and recurses, so a bare
-# `gofmt -l .` reports the vendored dependencies - which are not ours to
-# format, and which `gofmt -w` would rewrite, leaving vendor/ inconsistent
-# with its module.
-GOFILES = $(shell find . -name '*.go' -not -path './vendor/*')
-
 # Mirrors the CI workflow, so a green 'make check' locally means a green CI.
 check: $(GOLANGCI_LINT)
-	@unformatted=`gofmt -l $(GOFILES)`; \
+	@unformatted=`gofmt -l .`; \
 	if [ -n "$$unformatted" ]; then \
 		echo "these files need gofmt:"; echo "$$unformatted"; exit 1; \
 	fi
@@ -150,7 +144,7 @@ check: $(GOLANGCI_LINT)
 	go test -race -cover ./...
 
 fmt:
-	gofmt -l -w $(GOFILES)
+	gofmt -l -w .
 
 vet:
 	go vet ./...
