@@ -3,7 +3,7 @@ package handlers
 import (
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -67,6 +67,6 @@ func (s *Server) HandleBackup(w http.ResponseWriter, r *http.Request) {
 	// headers are already sent, so there is no status code left to change —
 	// log it and stop.
 	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("stream backup: %v", err)
+		slog.ErrorContext(r.Context(), "stream backup", "error", err)
 	}
 }

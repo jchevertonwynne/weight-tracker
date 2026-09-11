@@ -1,43 +1,46 @@
-// Package metrics exposes a minimal Prometheus-format /metrics endpoint and
-// an HTTP middleware that records request latency, without pulling in a
-// third-party client library — the whole app has one dependency
-// (modernc.org/sqlite) and this keeps it that way.
+// Package metrics exposes a Prometheus /metrics endpoint and an HTTP
+// middleware that records request latency and concurrency.
+//
+// The metric contract is frozen.
+// resources/dashboards/jcwpi-observability.json and
+// resources/alerts/app-error-burst.yaml in the homelab repo build one panel
+// and one alert expression per app out of these exact series,
+// so a renamed metric or a renamed label produces an empty panel rather than
+// an error anyone would notice.
+// The names below, the label set, the order of the labels and the bucket
+// bounds are therefore not this app's to change on its own:
+// all seven apps move together or not at all.
 package metrics
 
 import (
-	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// buckets are upper bounds in seconds, matching Prometheus's own default
-// client histogram buckets so dashboards built against other apps' metrics
-// still make sense against this one.
-var buckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
-
-type key struct {
-	method string
-	route  string
-	status int
-}
-
-// histogram counts, per bucket, requests whose latency fell at or below
-// that bucket's upper bound. counts[len(buckets)] is the +Inf overflow
-// bucket for anything slower than the largest named bucket.
-type histogram struct {
-	counts []uint64
-	sum    float64
-	count  uint64
-}
-
+// status is a string label holding the numeric code — not an int,
+// and not named "code" — because that is what the hand-rolled exposition
+// this replaced emitted, and what the dashboard queries match on.
+//
+// prometheus.DefBuckets is byte-identical to the bucket list that used to be
+// spelled out here, so it is referenced rather than restated:
+// these are the client-library defaults every app's dashboard is already
+// built against.
 var (
-	mu       sync.Mutex
-	hists    = map[key]*histogram{}
-	inFlight int64
+	duration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "http_request_duration_seconds",
+		Help:    "HTTP request latency in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "route", "status"})
+
+	inFlight = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "http_requests_in_flight",
+		Help: "HTTP requests currently being served.",
+	})
 )
 
 // patternHandler is the one method of *http.ServeMux that Instrument needs:
@@ -67,8 +70,8 @@ type patternHandler interface {
 // reason.
 func Instrument(h http.Handler, extraRouters ...patternHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&inFlight, 1)
-		defer atomic.AddInt64(&inFlight, -1)
+		inFlight.Inc()
+		defer inFlight.Dec()
 
 		route := ""
 		if router, ok := h.(patternHandler); ok {
@@ -88,7 +91,8 @@ func Instrument(h http.Handler, extraRouters ...patternHandler) http.Handler {
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 		h.ServeHTTP(sw, r)
-		record(r.Method, route, sw.status, time.Since(start).Seconds())
+		duration.WithLabelValues(r.Method, route, strconv.Itoa(sw.status)).
+			Observe(time.Since(start).Seconds())
 	})
 }
 
@@ -105,64 +109,18 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
-func record(method, route string, status int, seconds float64) {
-	mu.Lock()
-	defer mu.Unlock()
-	k := key{method: method, route: route, status: status}
-	h, ok := hists[k]
-	if !ok {
-		h = &histogram{counts: make([]uint64, len(buckets)+1)}
-		hists[k] = h
-	}
-	h.count++
-	h.sum += seconds
-	// SearchFloat64s returns the first bucket whose bound is >= seconds —
-	// exactly the one bucket (of the fixed set) this observation belongs
-	// to before cumulative sums are computed at render time. A value past
-	// every named bucket lands on len(buckets), the +Inf slot.
-	h.counts[sort.SearchFloat64s(buckets, seconds)]++
-}
+// Unwrap is how net/http's ResponseController reaches the real
+// ResponseWriter through this wrapper.
+// Embedding http.ResponseWriter forwards only the three interface methods;
+// the optional ones a handler might need — Flush, Hijack, the read and
+// write deadline setters — are found by unwrapping,
+// and without this method http.NewResponseController stops at statusWriter
+// and reports every one of them as unsupported.
+// The failure that would cause is silent: a streaming or hijacking handler
+// keeps compiling and starts returning errors at runtime instead.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// Handler renders every recorded histogram, plus the in-flight gauge, in
-// Prometheus text exposition format.
-func Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		fmt.Fprintln(w, "# HELP http_request_duration_seconds HTTP request latency in seconds.")
-		fmt.Fprintln(w, "# TYPE http_request_duration_seconds histogram")
-
-		keys := make([]key, 0, len(hists))
-		for k := range hists {
-			keys = append(keys, k)
-		}
-		sort.Slice(keys, func(i, j int) bool {
-			if keys[i].route != keys[j].route {
-				return keys[i].route < keys[j].route
-			}
-			if keys[i].method != keys[j].method {
-				return keys[i].method < keys[j].method
-			}
-			return keys[i].status < keys[j].status
-		})
-
-		for _, k := range keys {
-			h := hists[k]
-			labels := fmt.Sprintf("method=%q,route=%q,status=%q", k.method, k.route, strconv.Itoa(k.status))
-			var cumulative uint64
-			for i, b := range buckets {
-				cumulative += h.counts[i]
-				fmt.Fprintf(w, "http_request_duration_seconds_bucket{%s,le=%q} %d\n", labels, strconv.FormatFloat(b, 'g', -1, 64), cumulative)
-			}
-			cumulative += h.counts[len(buckets)]
-			fmt.Fprintf(w, "http_request_duration_seconds_bucket{%s,le=\"+Inf\"} %d\n", labels, cumulative)
-			fmt.Fprintf(w, "http_request_duration_seconds_sum{%s} %s\n", labels, strconv.FormatFloat(h.sum, 'g', -1, 64))
-			fmt.Fprintf(w, "http_request_duration_seconds_count{%s} %d\n", labels, h.count)
-		}
-
-		fmt.Fprintln(w, "# HELP http_requests_in_flight HTTP requests currently being served.")
-		fmt.Fprintln(w, "# TYPE http_requests_in_flight gauge")
-		fmt.Fprintf(w, "http_requests_in_flight %d\n", atomic.LoadInt64(&inFlight))
-	})
-}
+// Handler serves the default registry: the app's own two series above,
+// plus the Go runtime and process collectors client_golang registers there
+// by default, which is where go_goroutines and the rest come from.
+func Handler() http.Handler { return promhttp.Handler() }

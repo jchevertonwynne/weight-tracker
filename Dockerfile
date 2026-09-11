@@ -5,8 +5,10 @@
 FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 WORKDIR /src
 
-# No third-party dependencies beyond modernc.org/sqlite, but copying the
-# module files first still lets the download layer cache across source edits.
+# Copying the module files before the source means the download layer is
+# cached across source edits — worth more now than it was when this app had
+# one dependency, since the module graph includes OpenTelemetry, gRPC and the
+# Prometheus client.
 COPY go.mod go.sum ./
 RUN go mod download
 

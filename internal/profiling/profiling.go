@@ -14,7 +14,7 @@
 package profiling
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/pprof"
 	"runtime"
@@ -59,6 +59,6 @@ func Handler() http.Handler {
 // to take the whole app down if its own port can't bind.
 func ListenAndServe(addr string) {
 	if err := http.ListenAndServe(addr, Handler()); err != nil {
-		log.Printf("profiling server on %s: %v", addr, err)
+		slog.Error("profiling server", "addr", addr, "error", err)
 	}
 }

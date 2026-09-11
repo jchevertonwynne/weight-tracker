@@ -3,7 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"weight-tracker/internal/chart"
@@ -97,7 +97,7 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := w.Write(buf.Bytes()); err != nil {
-		log.Printf("write index response: %v", err)
+		slog.ErrorContext(r.Context(), "write index response", "error", err)
 	}
 }
 
@@ -111,7 +111,7 @@ func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if _, err := w.Write([]byte("ok\n")); err != nil {
-		log.Printf("write healthz response: %v", err)
+		slog.ErrorContext(r.Context(), "write healthz response", "error", err)
 	}
 }
 
@@ -153,7 +153,7 @@ func (s *Server) HandleChart(w http.ResponseWriter, r *http.Request) {
 // HandleServiceWorker serves the service worker from a top-level path so its
 // default scope is "/" (the whole app), not "/static/" — a service worker's
 // scope defaults to the directory of its own URL.
-func (s *Server) HandleServiceWorker(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) HandleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	b, err := s.staticFS.ReadFile("static/sw.js")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -162,6 +162,6 @@ func (s *Server) HandleServiceWorker(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	if _, err := w.Write(b); err != nil {
-		log.Printf("write service worker: %v", err)
+		slog.ErrorContext(r.Context(), "write service worker", "error", err)
 	}
 }
