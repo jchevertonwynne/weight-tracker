@@ -7,18 +7,17 @@
 package handlers
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"embed"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"html/template"
-	"io/fs"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/jchevertonwynne/homelab-go/etag"
 
 	"weight-tracker/internal/db"
 )
@@ -31,12 +30,20 @@ type Server struct {
 	db       *sql.DB
 	tmpl     *template.Template
 	staticFS embed.FS
-	// staticETags maps a /static/ URL path to a strong ETag over that
-	// file's bytes. See staticETags' doc comment for why it is needed at
-	// all; computed once in New, since an embed.FS cannot change at
-	// runtime.
-	staticETags map[string]string
-	now         func() time.Time
+	// staticHandler serves the embedded static assets with a content-hash
+	// ETag (etag.Map/etag.Handler), computed once in New since an embed.FS
+	// cannot change at runtime.
+	//
+	// Files in an embed.FS report a zero modification time, so
+	// http.FileServerFS omits Last-Modified and Go generates no ETag of its
+	// own — that left /static/ responses with no validator and no
+	// Cache-Control at all. Browsers are free to apply heuristic freshness
+	// to a response like that, and did: after a deploy the new HTML arrived
+	// (it is generated per request) while the old JavaScript kept being
+	// served from cache, a page half on each version and unfixable from the
+	// server side until the browser happened to evict it.
+	staticHandler http.Handler
+	now           func() time.Time
 }
 
 // New builds a Server. templatesFS/staticFS are the embed.FS values
@@ -46,50 +53,7 @@ type Server struct {
 // here rather than this package embedding them itself. Pass time.Now for
 // now in production; tests can pass a fixed closure instead.
 func New(sqlDB *sql.DB, templatesFS, staticFS embed.FS, now func() time.Time) *Server {
-	return &Server{
-		db:          sqlDB,
-		tmpl:        template.Must(template.ParseFS(templatesFS, "templates/*.html")),
-		staticFS:    staticFS,
-		staticETags: staticETags(staticFS),
-		now:         now,
-	}
-}
-
-// staticETags hashes every embedded static file so each can be served with
-// a validator.
-//
-// Files in an embed.FS report a zero modification time, so
-// http.FileServerFS omits Last-Modified, and Go never generates an ETag of
-// its own. That left /static/ responses with no validator and no
-// Cache-Control at all — nothing telling a browser how long the file is
-// good for, and nothing it could revalidate with if it wanted to. Browsers
-// are free to apply heuristic freshness to a response like that, and did:
-// after a deploy the new HTML arrived (it is generated per request) while
-// the old JavaScript kept being served from cache, which is a page half on
-// each version, and unfixable from the server side until the browser
-// happened to evict it.
-//
-// A content hash is the right validator here because the content is the
-// only thing that changes: the same asset in two builds is the same ETag,
-// so an unchanged file still 304s across a deploy.
-func staticETags(staticFS embed.FS) map[string]string {
-	etags := make(map[string]string)
-	err := fs.WalkDir(staticFS, "static", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		content, err := staticFS.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		sum := sha256.Sum256(content)
-		// Quoted, and not weak: this is a byte-for-byte comparison.
-		etags["/"+path] = `"` + hex.EncodeToString(sum[:16]) + `"`
-		return nil
-	})
+	etags, err := etag.Map(staticFS, "static")
 	if err != nil {
 		// These files are compiled into the binary, so failing to walk or
 		// read one is a build problem rather than a runtime condition —
@@ -98,28 +62,13 @@ func staticETags(staticFS embed.FS) map[string]string {
 		// wrong.
 		panic("hash embedded static assets: " + err.Error())
 	}
-	return etags
-}
-
-// serveStatic serves the embedded assets with the validator
-// http.FileServerFS cannot supply for an embed.FS (see staticETags).
-//
-// The ETag goes on the response header before delegating because that is
-// where http.ServeContent looks for it: its If-None-Match check reads the
-// header already set on the ResponseWriter, so setting it here is what
-// turns a repeat request into a 304 rather than 46KB of JavaScript.
-//
-// Cache-Control is no-cache rather than a max-age: "keep it, but ask me
-// first". These assets are small, the app is a handful of users on a home
-// network, and a conditional request that answers 304 costs almost
-// nothing — whereas any max-age at all reintroduces exactly the window
-// where a deploy leaves a browser on the old JavaScript.
-func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
-	if etag, ok := s.staticETags[r.URL.Path]; ok {
-		w.Header().Set("ETag", etag)
+	return &Server{
+		db:            sqlDB,
+		tmpl:          template.Must(template.ParseFS(templatesFS, "templates/*.html")),
+		staticFS:      staticFS,
+		staticHandler: etag.Handler(staticFS, etags),
+		now:           now,
 	}
-	w.Header().Set("Cache-Control", "no-cache")
-	http.FileServerFS(s.staticFS).ServeHTTP(w, r)
 }
 
 // RegisterRoutes wires every route onto mux. Kept as one method rather
@@ -127,7 +76,7 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 // in one place, and so main.go doesn't need to know it exists route by
 // route — just that the Server registers itself.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /static/", s.serveStatic)
+	mux.Handle("GET /static/", s.staticHandler)
 	mux.HandleFunc("GET /{$}", s.HandleIndex)
 	mux.HandleFunc("GET /chart", s.HandleChart)
 	mux.HandleFunc("GET /summary", s.HandleSummary)

@@ -1,10 +1,11 @@
 package handlers
 
 import (
-	"bytes"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 
 	"weight-tracker/internal/chart"
 	"weight-tracker/internal/db"
@@ -80,24 +81,13 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 		Overnight:      overnight.BuildSummary(overnightPairs),
 		Pairs:          overnightPairs,
 	}
-	// Rendered into a buffer rather than straight to w. Writing to the
-	// ResponseWriter commits a 200 with the first byte, so a template that
-	// failed halfway left http.Error trying to set a 500 on an
-	// already-committed response — Go logs that as "superfluous
-	// response.WriteHeader call" and the client keeps the truncated 200.
-	// Buffering means a genuine template error becomes a clean 500 with no
-	// partial page, and the only thing that can fail afterwards is the write
-	// itself, which nothing can be done about but log.
-	//
-	// The page is a few tens of kilobytes, so holding one in memory is
-	// cheaper than the alternative being wrong.
-	var buf bytes.Buffer
-	if err := s.tmpl.ExecuteTemplate(&buf, "index", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if _, err := w.Write(buf.Bytes()); err != nil {
-		slog.ErrorContext(r.Context(), "write index response", "error", err)
+	// render.Named buffers before writing: writing straight to w commits a
+	// 200 with the first byte, so a template that failed halfway used to
+	// leave http.Error trying to set a 500 on an already-committed
+	// response — Go logs that as "superfluous response.WriteHeader call"
+	// and the client keeps the truncated 200.
+	if err := render.Named(w, s.tmpl, "index", data); err != nil {
+		slog.ErrorContext(r.Context(), "render index", "error", err)
 	}
 }
 

@@ -3,9 +3,8 @@ module weight-tracker
 go 1.26.5
 
 require (
-	github.com/jchevertonwynne/homelab-go v0.1.1
+	github.com/jchevertonwynne/homelab-go v0.2.0
 	go.opentelemetry.io/otel v1.46.0
-	go.opentelemetry.io/otel/trace v1.46.0
 	modernc.org/sqlite v1.56.0
 )
 
@@ -33,6 +32,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.46.0 // indirect
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
