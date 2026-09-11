@@ -98,9 +98,37 @@ func run() error {
 		slog.Warn("journal mode is not WAL", "journal_mode", journalMode)
 	}
 
-	if err := serve.Run(*addr, tracing.Middleware("weight-tracker", metrics.Instrument(mux)),
+	// refuseCrossOrigin outside Instrument, so Instrument keeps seeing the
+	// mux itself and labelling requests with its real routes.
+	if err := serve.Run(*addr, tracing.Middleware("weight-tracker", refuseCrossOrigin(metrics.Instrument(mux))),
 		serve.WithLogAttrs("db", *dbPath, "journal_mode", journalMode)); err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
 	return nil
+}
+
+// refuseCrossOrigin refuses any state-changing request that another site made
+// the browser send.
+//
+// This app has no login of its own. Cloudflare Access decides who is calling
+// from its CF_Authorization cookie, and the browser attaches that cookie to
+// any request to this hostname, including a form on another site that posts
+// here. The Access application leaves SameSite unset, and Safari and Firefox
+// then send the cookie on a cross-site POST. Without this, a page visited while
+// signed in could auto-submit a form to POST /settings/delete-all and wipe
+// every entry, or to POST /import and fill the chart with its own data.
+//
+// net/http's CrossOriginProtection refuses exactly that: a request other than
+// GET, HEAD or OPTIONS whose Sec-Fetch-Site says another site sent it, or,
+// from a browser too old to send that header, whose Origin names another
+// host. The app's own htmx requests and forms are same-origin and pass, and a
+// request with neither header is not a browser and so has no cookie to
+// borrow. GET is never refused, which is why no GET here may change anything.
+func refuseCrossOrigin(next http.Handler) http.Handler {
+	p := http.NewCrossOriginProtection()
+	p.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.WarnContext(r.Context(), "refusing a cross-origin request", "method", r.Method, "path", r.URL.Path)
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+	}))
+	return p.Handler(next)
 }
