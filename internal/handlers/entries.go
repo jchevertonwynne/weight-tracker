@@ -1,13 +1,15 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/history"
 	"weight-tracker/internal/timerange"
 	"weight-tracker/internal/weight"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
 // parseRecordedAt reads the split recorded_at_date/recorded_at_time fields.
@@ -51,8 +53,8 @@ func (s *Server) RenderEntriesList(w http.ResponseWriter, r *http.Request) {
 	periodParam, window := s.entriesWindow(r)
 	w.Header().Set("HX-Trigger", "entries-changed")
 	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries), periodParam, window)}
-	if err := s.tmpl.ExecuteTemplate(w, "entries-list", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "entries-list", data); err != nil {
+		slog.ErrorContext(r.Context(), "render entries-list", "error", err)
 	}
 }
 
@@ -91,8 +93,8 @@ func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := history.BuildRows([]db.Entry{entry})
-	if err := s.tmpl.ExecuteTemplate(w, "row-edit", rows[0]); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "row-edit", rows[0]); err != nil {
+		slog.ErrorContext(r.Context(), "render row-edit", "error", err)
 	}
 }
 
@@ -109,8 +111,8 @@ func (s *Server) HandleCancelEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range history.BuildRows(entries) {
 		if row.ID == id {
-			if err := s.tmpl.ExecuteTemplate(w, "row", row); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			if err := render.Named(w, s.tmpl, "row", row); err != nil {
+				slog.ErrorContext(r.Context(), "render row", "error", err)
 			}
 			return
 		}

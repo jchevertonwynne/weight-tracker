@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/markers"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
 // RenderMarkersList re-renders the markers-list card and fires
@@ -19,8 +21,8 @@ func (s *Server) RenderMarkersList(ctx context.Context, w http.ResponseWriter) {
 	}
 	w.Header().Set("HX-Trigger", "markers-changed")
 	data := struct{ Markers []markers.Row }{Markers: markers.BuildRows(markerList)}
-	if err := s.tmpl.ExecuteTemplate(w, "markers-list", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "markers-list", data); err != nil {
+		slog.ErrorContext(ctx, "render markers-list", "error", err)
 	}
 }
 
@@ -54,8 +56,8 @@ func (s *Server) HandleMarkerEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := markers.BuildRows([]db.Marker{marker})
-	if err := s.tmpl.ExecuteTemplate(w, "marker-row-edit", rows[0]); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "marker-row-edit", rows[0]); err != nil {
+		slog.ErrorContext(r.Context(), "render marker-row-edit", "error", err)
 	}
 }
 
@@ -72,8 +74,8 @@ func (s *Server) HandleMarkerCancelEdit(w http.ResponseWriter, r *http.Request) 
 	}
 	for _, row := range markers.BuildRows(markerList) {
 		if row.ID == id {
-			if err := s.tmpl.ExecuteTemplate(w, "marker-row", row); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			if err := render.Named(w, s.tmpl, "marker-row", row); err != nil {
+				slog.ErrorContext(r.Context(), "render marker-row", "error", err)
 			}
 			return
 		}

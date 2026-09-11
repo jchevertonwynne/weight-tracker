@@ -1,15 +1,17 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/importer"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
-func (s *Server) HandleImportForm(w http.ResponseWriter, _ *http.Request) {
-	if err := s.tmpl.ExecuteTemplate(w, "import", nil); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func (s *Server) HandleImportForm(w http.ResponseWriter, r *http.Request) {
+	if err := render.Named(w, s.tmpl, "import", nil); err != nil {
+		slog.ErrorContext(r.Context(), "render import", "error", err)
 	}
 }
 
@@ -74,7 +76,7 @@ func (s *Server) HandleImport(w http.ResponseWriter, r *http.Request) {
 		Errors:     skippedErrors,
 		Truncated:  truncated,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "import-result", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "import-result", data); err != nil {
+		slog.ErrorContext(r.Context(), "render import-result", "error", err)
 	}
 }

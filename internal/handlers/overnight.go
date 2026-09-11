@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/overnight"
 	"weight-tracker/internal/timerange"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
 // HandleOvernightTab renders the Overnight tab's stats and pairs-table
@@ -39,8 +41,8 @@ func (s *Server) HandleOvernightTab(w http.ResponseWriter, r *http.Request) {
 		Overnight: overnight.BuildSummary(pairs),
 		Pairs:     pairs,
 	}
-	if err := s.tmpl.ExecuteTemplate(w, "overnight-content", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "overnight-content", data); err != nil {
+		slog.ErrorContext(r.Context(), "render overnight-content", "error", err)
 	}
 }
 

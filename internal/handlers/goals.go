@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/goals"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
 // RenderGoalsList re-renders the goals-list card and fires goals-changed so
@@ -19,8 +21,8 @@ func (s *Server) RenderGoalsList(ctx context.Context, w http.ResponseWriter) {
 	}
 	w.Header().Set("HX-Trigger", "goals-changed")
 	data := struct{ Goals []goals.Row }{Goals: goals.BuildRows(goalList, s.now())}
-	if err := s.tmpl.ExecuteTemplate(w, "goals-list", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "goals-list", data); err != nil {
+		slog.ErrorContext(ctx, "render goals-list", "error", err)
 	}
 }
 
@@ -54,8 +56,8 @@ func (s *Server) HandleGoalEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows := goals.BuildRows([]db.Goal{goal}, s.now())
-	if err := s.tmpl.ExecuteTemplate(w, "goal-row-edit", rows[0]); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "goal-row-edit", rows[0]); err != nil {
+		slog.ErrorContext(r.Context(), "render goal-row-edit", "error", err)
 	}
 }
 
@@ -72,8 +74,8 @@ func (s *Server) HandleGoalCancelEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range goals.BuildRows(goalList, s.now()) {
 		if row.ID == id {
-			if err := s.tmpl.ExecuteTemplate(w, "goal-row", row); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			if err := render.Named(w, s.tmpl, "goal-row", row); err != nil {
+				slog.ErrorContext(r.Context(), "render goal-row", "error", err)
 			}
 			return
 		}

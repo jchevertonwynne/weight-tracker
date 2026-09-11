@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"log/slog"
 	"net/http"
-
 	"weight-tracker/internal/db"
 	"weight-tracker/internal/summary"
+
+	"github.com/jchevertonwynne/homelab-go/render"
 )
 
 func (s *Server) HandleSummary(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +21,7 @@ func (s *Server) HandleSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := summary.Build(entries, goalList, s.now())
-	if err := s.tmpl.ExecuteTemplate(w, "summary", data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := render.Named(w, s.tmpl, "summary", data); err != nil {
+		slog.ErrorContext(r.Context(), "render summary", "error", err)
 	}
 }
