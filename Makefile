@@ -13,9 +13,20 @@ LOG_FILE := $(BIN_DIR)/$(BINARY).log
 GOLANGCI_LINT_VERSION := v2.13.2
 GOLANGCI_LINT         := $(BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
+# There is no Cloudflare Access in front of a local server, so every request
+# arrives with no identity header and would be refused. DEV_USER supplies one.
+DEV_USER ?= dev@example.com
+# The addresses Access admits, which in production come from a ConfigMap the
+# homelab repo generates from its access-policy.json. Empty here, so a local
+# run admits whoever it is told to be. Set it to try the closed set (DEV_USER
+# is admitted either way): make run ALLOWED='a@example.com,b@example.com'
+ALLOWED ?=
+
 # What 'make start' polls to decide the daemon is actually serving. Override
-# alongside ADDR if you bind to something localhost can't reach.
-HEALTH_URL ?= http://localhost$(ADDR)/
+# alongside ADDR if you bind to something localhost can't reach. /healthz
+# rather than /: every other route needs an identity, so a plain curl at the
+# root is a 403 whether or not the app came up.
+HEALTH_URL ?= http://localhost$(ADDR)/healthz
 
 # set PI_ARCH=armv6 for 32-bit Raspberry Pi OS
 PI_ARCH ?= arm64
@@ -23,7 +34,8 @@ PI_ARCH ?= arm64
 .PHONY: run build build-pi start stop restart status logs clean fmt vet lint tidy test check deploy deploy-tunnel help
 
 help:
-	@echo "make run           - go run the app locally on $(ADDR), attached to this terminal"
+	@echo "make run           - go run the app locally on $(ADDR) as $(DEV_USER), attached to this terminal"
+	@echo "                     ALLOWED='a@x.com,b@x.com' to try the closed allowlist"
 	@echo "make start         - build, then run detached in the background (daemon)"
 	@echo "make stop          - stop the background daemon started by 'make start'"
 	@echo "make restart       - stop then start the daemon"
@@ -42,7 +54,7 @@ help:
 	@echo "make tidy          - go mod tidy"
 
 run:
-	go run . -addr $(ADDR) -db $(DB)
+	go run . -addr $(ADDR) -db $(DB) -dev-user $(DEV_USER) -allowed-emails '$(ALLOWED)'
 
 build:
 	mkdir -p $(BIN_DIR)
@@ -52,7 +64,7 @@ start: build
 	@if [ -f $(PID_FILE) ] && kill -0 `cat $(PID_FILE)` 2>/dev/null; then \
 		echo "already running (pid `cat $(PID_FILE)`)"; \
 	else \
-		nohup $(BIN_DIR)/$(BINARY) -addr $(ADDR) -db $(DB) > $(LOG_FILE) 2>&1 & \
+		nohup $(BIN_DIR)/$(BINARY) -addr $(ADDR) -db $(DB) -dev-user $(DEV_USER) -allowed-emails '$(ALLOWED)' > $(LOG_FILE) 2>&1 & \
 		pid=$$!; \
 		echo $$pid > $(PID_FILE); \
 		i=0; \

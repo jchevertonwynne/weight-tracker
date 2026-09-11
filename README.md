@@ -64,9 +64,24 @@ to decide what `time.Local` is. Without it the pod runs in UTC and the split
 shifts by up to an hour, silently.
 
 `weight.jchevertonwynne.uk` is served through a Cloudflare tunnel and sits
-behind Cloudflare Access with an email allowlist. Access is enforced at
-Cloudflare's edge, per hostname — nothing in this repo or the cluster
-authenticates anything.
+behind Cloudflare Access with an email allowlist, enforced at Cloudflare's
+edge, per hostname. The app checks that allowlist a second time, against the
+`Cf-Access-Authenticated-User-Email` header Access adds and a copy of the list
+in `-allowed-emails`, fed by a ConfigMap the homelab repo generates from the
+policy file. That is not belt-and-braces: Access consults its policy only when
+it issues a session, so someone removed from the policy keeps a working session
+for up to a month, and this is what ends it — when the pod restarts onto the
+new list, a minute or two after the change. A request with no header at all is
+refused too, so that Access being removed or bypassed cannot read as "no
+identity required".
+
+Everything is behind that check except `/healthz`, `/metrics`, `/static/`,
+`/sw.js` and `/backup.db`, each named in `routes` in `main.go` with its reason.
+There is still no login, no accounts and no per-user data: everyone the
+allowlist admits sees and edits the same entries.
+
+Locally there is no Access at all, so `make run` passes `-dev-user`, which
+stands in for the header and is admitted whether or not it is on the list.
 
 `make build-pi` still cross-compiles a bare binary, which is occasionally
 useful for testing on the Pi directly, but it is not how this gets deployed.

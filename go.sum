@@ -27,6 +27,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/jchevertonwynne/homelab-go v0.2.0 h1:TxO4vEE7MiwEYDI1OUrAF0V5ZCQqJ5He77a/FwLL3Ec=
 github.com/jchevertonwynne/homelab-go v0.2.0/go.mod h1:UkIn0n8/s7l/xoaFypI4h13/2FKaqR8N0SCo8YW9VeU=
+github.com/jchevertonwynne/homelab-go v0.3.0 h1:rS9gsrUDnXfMhT6QWXsT8vfhM9YaNqT7w3oLEfW+xWk=
+github.com/jchevertonwynne/homelab-go v0.3.0/go.mod h1:UkIn0n8/s7l/xoaFypI4h13/2FKaqR8N0SCo8YW9VeU=
 github.com/klauspost/compress v1.19.1 h1:VsB4HPswih7mmZ8WleSFQ75c/Ui1M4trX5oAsJnhSlk=
 github.com/klauspost/compress v1.19.1/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
