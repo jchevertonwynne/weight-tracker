@@ -10,53 +10,51 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// The trace ids are the only reason this package exists rather than a bare
-// slog.NewJSONHandler in main, so both halves of the rule are worth pinning:
-// attach them when there is a real span, and attach nothing when there isn't.
-
-func TestHandleAttachesTraceIDsFromSpanContext(t *testing.T) {
+// record logs one message through the trace handler and returns the decoded
+// JSON, which is the form Alloy hands to Loki.
+func record(t *testing.T, ctx context.Context) map[string]any {
+	t.Helper()
 	var buf bytes.Buffer
-	logger := slog.New(&traceHandler{Handler: slog.NewJSONHandler(&buf, nil)})
+	h := &traceHandler{Handler: slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})}
+	slog.New(h).ErrorContext(ctx, "encode response", "error", "broken pipe")
 
-	traceID := trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
+	var got map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("log line is not JSON: %v\n%s", err, buf.String())
+	}
+	return got
+}
+
+func TestAttachesTraceIDsFromContext(t *testing.T) {
+	traceID := trace.TraceID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
 	spanID := trace.SpanID{0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18}
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
-		TraceID:    traceID,
-		SpanID:     spanID,
-		TraceFlags: trace.FlagsSampled,
+		TraceID: traceID,
+		SpanID:  spanID,
 	}))
 
-	logger.ErrorContext(ctx, "write index response", "error", "broken pipe")
-
-	got := decode(t, buf.Bytes())
+	got := record(t, ctx)
 	if got["trace_id"] != traceID.String() {
-		t.Errorf("trace_id = %v, want %q", got["trace_id"], traceID.String())
+		t.Errorf("trace_id = %v, want %s", got["trace_id"], traceID)
 	}
 	if got["span_id"] != spanID.String() {
-		t.Errorf("span_id = %v, want %q", got["span_id"], spanID.String())
+		t.Errorf("span_id = %v, want %s", got["span_id"], spanID)
 	}
-	// Grafana's derived field matches on the level and the message too, so a
-	// record that loses them on the way through the wrapper is no more
-	// useful than one with no ids at all.
+	// The joinable pair is only half of it: the static message and the level
+	// are what a Loki query selects on in the first place.
+	if got["msg"] != "encode response" {
+		t.Errorf("msg = %v, want a static message", got["msg"])
+	}
 	if got["level"] != "ERROR" {
-		t.Errorf("level = %v, want %q", got["level"], "ERROR")
-	}
-	if got["msg"] != "write index response" {
-		t.Errorf("msg = %v, want %q", got["msg"], "write index response")
+		t.Errorf("level = %v, want ERROR", got["level"])
 	}
 }
 
-func TestHandleOmitsTraceIDsWithoutASpan(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(&traceHandler{Handler: slog.NewJSONHandler(&buf, nil)})
-
-	// Startup and shutdown records look like this, as does every record in
-	// the cluster before Alloy's receiver is reachable. An all-zero trace id
-	// here would look like a real one in Loki and link to nothing in Tempo.
-	logger.Info("listening", "addr", ":8090")
-
-	got := decode(t, buf.Bytes())
+// An invalid span context must contribute nothing. Startup and shutdown lines
+// have no span, and an all-zero trace id would make every one of them a link
+// to a trace that does not exist.
+func TestOmitsTraceIDsWithoutASpan(t *testing.T) {
+	got := record(t, context.Background())
 	if _, ok := got["trace_id"]; ok {
 		t.Errorf("trace_id present without a span: %v", got["trace_id"])
 	}
@@ -65,11 +63,28 @@ func TestHandleOmitsTraceIDsWithoutASpan(t *testing.T) {
 	}
 }
 
-func decode(t *testing.T, line []byte) map[string]any {
-	t.Helper()
+// slog.With returns a derived handler. The embedded slog.Handler's own
+// WithAttrs would return the inner JSON handler and drop the trace wrapper
+// with it, which loses the ids for every call site that pre-binds attributes.
+func TestDerivedLoggersKeepTraceIDs(t *testing.T) {
+	traceID := trace.TraceID{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a}
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID,
+		SpanID:  trace.SpanID{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08},
+	}))
+
+	var buf bytes.Buffer
+	h := &traceHandler{Handler: slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})}
+	slog.New(h).With("component", "web").InfoContext(ctx, "listening")
+
 	var got map[string]any
-	if err := json.Unmarshal(line, &got); err != nil {
-		t.Fatalf("log line is not JSON (%v): %s", err, line)
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("log line is not JSON: %v\n%s", err, buf.String())
 	}
-	return got
+	if got["trace_id"] != traceID.String() {
+		t.Errorf("trace_id = %v, want %s", got["trace_id"], traceID)
+	}
+	if got["component"] != "web" {
+		t.Errorf("component = %v, want web", got["component"])
+	}
 }
