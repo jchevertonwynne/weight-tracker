@@ -43,15 +43,12 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go mod tidy is up to date
-        run: |
-          go mod tidy
-          if ! git diff --quiet go.mod go.sum; then
-            echo "go.mod/go.sum are stale — run 'make tidy' and commit the result:"
-            git diff go.mod go.sum
-            exit 1
-          fi
-
+      # No `go mod tidy` check here any more. tidy always resolves the full
+      # module graph over the network, ignoring vendor/, and homelab-go is a
+      # private repo - so this step would fail in Actions with no credential,
+      # which is the thing vendoring exists to avoid. Consistency is still
+      # enforced: every `go build`/`go vet`/`go test` below runs in vendor mode
+      # and fails outright if vendor/modules.txt disagrees with go.mod.
       - name: Test
         run: go test -race -cover ./...
 
