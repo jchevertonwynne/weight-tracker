@@ -381,14 +381,9 @@ form.htmx-request button[type="submit"]::before {
 }
 
 .entry-row {
-	/* Two stacked lines, so every row has the same shape regardless of how
-	   wide its content is: line 1 is the weigh-in (chip, date, weight), line 2
-	   pairs the delta chip with the Edit/Delete actions. Previously the whole
-	   thing was one wrapping flex line, so the actions dropped to a second line
-	   on only the wider rows — the inconsistency this replaces. */
 	display: flex;
-	flex-direction: column;
-	gap: 0.4rem;
+	align-items: center;
+	gap: 0.5rem;
 	padding: 0.75rem 0;
 	border-bottom: 1px solid var(--row-border);
 }
@@ -402,23 +397,39 @@ form.htmx-request button[type="submit"]::before {
 	align-items: center;
 	gap: 0.6rem;
 	flex-wrap: wrap;
+	/* Take the width left of the edit button and shrink below the content's
+	   natural size, so a wide row wraps its own chips here rather than pushing
+	   the button off the row. */
+	flex: 1 1 auto;
+	min-width: 0;
 }
 
-/* Line 2: delta chip on the left, actions on the right. justify-content
-   spaces them apart; when there is no delta chip, .entry-actions' own
-   margin-left: auto still keeps the actions right-aligned. */
-.entry-meta {
-	display: flex;
+/* Compact icon-only action (the row's single Edit affordance). Sized for a
+   comfortable tap target while taking far less width than a text button, which
+   is what lets the row's content sit on one line. */
+.btn-icon {
+	flex-shrink: 0;
+	display: inline-flex;
 	align-items: center;
-	justify-content: space-between;
-	flex-wrap: wrap;
-	gap: 0.5rem;
+	justify-content: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	padding: 0;
+	border: none;
+	border-radius: 999px;
+	background: none;
+	color: var(--primary);
+	cursor: pointer;
 }
 
-.entry-deltas {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
+.btn-icon:hover {
+	background: var(--row-border);
+}
+
+/* Inside the edit form, push Delete away from Save/Cancel so the destructive
+   action can't be hit by reflex. */
+.edit-delete {
+	margin-left: auto;
 }
 
 .entry-date {
