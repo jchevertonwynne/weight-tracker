@@ -29,7 +29,6 @@ type Row struct {
 	OvernightLoss   bool
 	DailyDelta      string // set on evening entries: vs. that same day's morning
 	DailyGain       bool
-	Today           bool // recorded on the same calendar day as now
 }
 
 // sameDay reports whether a and b fall on the same calendar day, comparing
@@ -41,16 +40,17 @@ func sameDay(a, b time.Time, loc *time.Location) bool {
 	return ay == by && am == bm && ad == bd
 }
 
-// recordedAtLabel renders a weigh-in's timestamp relative to now: today's
-// rows show the time alone (the row's own "Today" chip already names the day),
-// yesterday's are prefixed "Yesterday", and anything older keeps the full
-// date. This keeps the most-looked-at recent rows scannable without dropping
-// the year that older readings need to stay unambiguous.
+// recordedAtLabel renders a weigh-in's timestamp relative to now: today's and
+// yesterday's rows are prefixed "Today"/"Yesterday" in place of the date, and
+// anything older keeps the full date. This keeps the most-looked-at recent
+// rows scannable — and makes it obvious at a glance whether today has been
+// tracked — without dropping the year that older readings need to stay
+// unambiguous.
 func recordedAtLabel(recordedAt, now time.Time) string {
 	loc := now.Location()
 	switch {
 	case sameDay(recordedAt, now, loc):
-		return recordedAt.Format("15:04")
+		return "Today " + recordedAt.Format("15:04")
 	case sameDay(recordedAt, now.AddDate(0, 0, -1), loc):
 		return "Yesterday " + recordedAt.Format("15:04")
 	default:
@@ -59,7 +59,7 @@ func recordedAtLabel(recordedAt, now time.Time) string {
 }
 
 // BuildRows converts entries into display-ready rows, including each row's
-// overnight/daily delta chip and its "today" flag (relative to now).
+// overnight/daily delta chip and its now-relative timestamp label.
 func BuildRows(entries []db.Entry, now time.Time) []Row {
 	_, overnightByID, dailyByID := weight.ChronologicalWithDeltas(entries)
 
@@ -76,7 +76,6 @@ func BuildRows(entries []db.Entry, now time.Time) []Row {
 			PeriodOverride:  e.PeriodOverride,
 			WeightKgRaw:     weight.FormatKgInput(e.WeightG),
 			WeightKgStr:     weight.FormatKg(e.WeightG),
-			Today:           sameDay(e.RecordedAt, now, now.Location()),
 		}
 		if period == "morning" {
 			r.PeriodLabel = "Morning"

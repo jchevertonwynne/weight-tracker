@@ -72,30 +72,20 @@ func TestBuildRowsFormatsGainsWithASign(t *testing.T) {
 	}
 }
 
-func TestBuildRowsMarksTodayByCalendarDay(t *testing.T) {
+func TestBuildRowsLabelsDatesRelativeToNow(t *testing.T) {
 	entries := []db.Entry{
-		// Same calendar day as now, but hours earlier — still "today".
+		// Same calendar day as now, but hours earlier — "Today".
 		entry(3, at(t, "2026-09-20 08:12"), 81.0, ""),
-		// Just before midnight the day before — not today, though only
+		// Just before midnight the day before — "Yesterday", though only
 		// hours away.
 		entry(2, at(t, "2026-09-19 23:50"), 81.4, ""),
+		// Older than that keeps the full, year-qualified date.
 		entry(1, at(t, "2026-08-15 07:30"), 83.1, ""),
 	}
 	rows := BuildRows(entries, at(t, "2026-09-20 21:30"))
 
-	if !rows[0].Today {
-		t.Error("row recorded earlier on the current day: Today = false, want true")
-	}
-	if rows[1].Today {
-		t.Error("row recorded the previous evening: Today = true, want false")
-	}
-	if rows[2].Today {
-		t.Error("row from a month ago: Today = true, want false")
-	}
-
-	// The label is relative for the recent rows and absolute for older ones.
-	if rows[0].RecordedAtLabel != "08:12" {
-		t.Errorf("today's label = %q, want the time alone %q (its chip names the day)", rows[0].RecordedAtLabel, "08:12")
+	if rows[0].RecordedAtLabel != "Today 08:12" {
+		t.Errorf("today's label = %q, want %q", rows[0].RecordedAtLabel, "Today 08:12")
 	}
 	if rows[1].RecordedAtLabel != "Yesterday 23:50" {
 		t.Errorf("yesterday's label = %q, want %q", rows[1].RecordedAtLabel, "Yesterday 23:50")
