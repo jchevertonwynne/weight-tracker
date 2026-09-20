@@ -41,6 +41,23 @@ func sameDay(a, b time.Time, loc *time.Location) bool {
 	return ay == by && am == bm && ad == bd
 }
 
+// recordedAtLabel renders a weigh-in's timestamp relative to now: today's
+// rows show the time alone (the row's own "Today" chip already names the day),
+// yesterday's are prefixed "Yesterday", and anything older keeps the full
+// date. This keeps the most-looked-at recent rows scannable without dropping
+// the year that older readings need to stay unambiguous.
+func recordedAtLabel(recordedAt, now time.Time) string {
+	loc := now.Location()
+	switch {
+	case sameDay(recordedAt, now, loc):
+		return recordedAt.Format("15:04")
+	case sameDay(recordedAt, now.AddDate(0, 0, -1), loc):
+		return "Yesterday " + recordedAt.Format("15:04")
+	default:
+		return recordedAt.Format("Jan 2, 2006 15:04")
+	}
+}
+
 // BuildRows converts entries into display-ready rows, including each row's
 // overnight/daily delta chip and its "today" flag (relative to now).
 func BuildRows(entries []db.Entry, now time.Time) []Row {
@@ -52,7 +69,7 @@ func BuildRows(entries []db.Entry, now time.Time) []Row {
 		r := Row{
 			ID:              e.ID,
 			RecordedAt:      e.RecordedAt,
-			RecordedAtLabel: e.RecordedAt.Format("Jan 2, 2006 15:04"),
+			RecordedAtLabel: recordedAtLabel(e.RecordedAt, now),
 			RecordedAtDate:  e.RecordedAt.Format("2006-01-02"),
 			RecordedAtTime:  e.RecordedAt.Format("15:04"),
 			Period:          period,

@@ -92,4 +92,15 @@ func TestBuildRowsMarksTodayByCalendarDay(t *testing.T) {
 	if rows[2].Today {
 		t.Error("row from a month ago: Today = true, want false")
 	}
+
+	// The label is relative for the recent rows and absolute for older ones.
+	if rows[0].RecordedAtLabel != "08:12" {
+		t.Errorf("today's label = %q, want the time alone %q (its chip names the day)", rows[0].RecordedAtLabel, "08:12")
+	}
+	if rows[1].RecordedAtLabel != "Yesterday 23:50" {
+		t.Errorf("yesterday's label = %q, want %q", rows[1].RecordedAtLabel, "Yesterday 23:50")
+	}
+	if rows[2].RecordedAtLabel != "Aug 15, 2026 07:30" {
+		t.Errorf("old row's label = %q, want the full date", rows[2].RecordedAtLabel)
+	}
 }

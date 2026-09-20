@@ -351,6 +351,34 @@ form.htmx-request button[type="submit"]::before {
 	font-style: italic;
 }
 
+/* The Log tab's "have I weighed in today?" banner. It reuses the chip colour
+   tokens — amber (the morning-chip palette) to nudge, green (the loss palette)
+   to confirm — so both states already carry light/dark variants. */
+.today-status {
+	margin: 0 0 0.85rem;
+	padding: 0.5rem 0.75rem;
+	border-radius: var(--radius);
+	border-left: 3px solid transparent;
+	font-size: 0.9rem;
+	font-weight: 500;
+}
+
+.today-status-todo {
+	background: var(--chip-morning-bg);
+	color: var(--borderline);
+	border-left-color: var(--borderline);
+}
+
+.today-status-done {
+	background: var(--chip-loss-bg);
+	color: var(--loss);
+	border-left-color: var(--loss);
+}
+
+.today-status-done::before {
+	content: "✓ ";
+}
+
 .entries {
 	display: flex;
 	flex-direction: column;

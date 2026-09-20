@@ -18,12 +18,44 @@ import (
 // treats as the reference point for overnight deltas).
 type WeeklySummary struct {
 	Empty         string // set (with everything else zero) if no data this week
+	Today         TodayStatus
 	ThisWeekAvg   string
 	HasComparison bool // false if last week has zero qualifying entries
 	LastWeekAvg   string
 	Delta         string
 	DeltaIsLoss   bool
 	Goal          GoalProgress
+}
+
+// TodayStatus is the Log tab's at-a-glance reminder of whether the weigh-in
+// for the current time of day (morning before noon, evening after — see
+// db.DetectPeriod) has been recorded yet, answering "have I tracked today?"
+// without a scroll through the history. It is computed independently of the
+// week comparison, so it still shows on a brand-new tracker with no trend yet.
+type TodayStatus struct {
+	Logged  bool
+	Message string
+}
+
+// todayStatus reports whether an entry for now's time-of-day period already
+// exists on now's calendar day, matching the "Today" the history list flags.
+func todayStatus(entries []db.Entry, now time.Time) TodayStatus {
+	period := db.DetectPeriod(now)
+	for _, e := range entries {
+		if weight.EntryPeriod(e) == period && sameDay(e.RecordedAt, now) {
+			return TodayStatus{Logged: true, Message: "Today's " + period + " weigh-in is logged."}
+		}
+	}
+	return TodayStatus{Message: "No " + period + " weigh-in logged yet today."}
+}
+
+// sameDay reports whether a and b fall on the same calendar day, both read in
+// b's location so a weigh-in stored in another zone is judged against the day
+// the user is currently in.
+func sameDay(a, b time.Time) bool {
+	ay, am, ad := a.In(b.Location()).Date()
+	by, bm, bd := b.Date()
+	return ay == by && am == bm && ad == bd
 }
 
 // GoalProgress projects this week's average onward to the active goal
@@ -53,6 +85,7 @@ const minRateKgPerWeek = 0.01
 // Build computes the weekly comparison from entries as of now, plus (if
 // allGoals has an active goal — see goals.Current) a projection toward it.
 func Build(entries []db.Entry, allGoals []db.Goal, now time.Time) WeeklySummary {
+	today := todayStatus(entries, now)
 	thisStart := now.AddDate(0, 0, -7)
 	lastStart := now.AddDate(0, 0, -14)
 
@@ -70,10 +103,10 @@ func Build(entries []db.Entry, allGoals []db.Goal, now time.Time) WeeklySummary 
 	}
 
 	if len(thisWeek) == 0 {
-		return WeeklySummary{Empty: "Not enough morning weigh-ins this week yet for a trend comparison."}
+		return WeeklySummary{Empty: "Not enough morning weigh-ins this week yet for a trend comparison.", Today: today}
 	}
 	thisAvg := meanKg(thisWeek)
-	result := WeeklySummary{ThisWeekAvg: fmt.Sprintf("%.1f kg", thisAvg)}
+	result := WeeklySummary{ThisWeekAvg: fmt.Sprintf("%.1f kg", thisAvg), Today: today}
 
 	activeGoal, hasGoal := goals.Current(allGoals, now)
 	var lastAvg float64

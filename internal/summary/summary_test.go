@@ -133,6 +133,64 @@ func TestBuild(t *testing.T) {
 	})
 }
 
+func TestBuildTodayStatus(t *testing.T) {
+	t.Run("morning, nothing logged today, prompts", func(t *testing.T) {
+		now := at(t, "2026-08-16 08:00") // morning
+		entries := []db.Entry{entry(1, at(t, "2026-08-15 21:00"), 82.0, "")}
+		got := Build(entries, nil, now).Today
+		if got.Logged {
+			t.Error("Logged = true, want false with no entry today")
+		}
+		if got.Message != "No morning weigh-in logged yet today." {
+			t.Errorf("Message = %q", got.Message)
+		}
+	})
+
+	t.Run("morning already logged today, confirms", func(t *testing.T) {
+		now := at(t, "2026-08-16 09:30") // morning
+		entries := []db.Entry{entry(1, at(t, "2026-08-16 07:15"), 82.0, "")}
+		got := Build(entries, nil, now).Today
+		if !got.Logged {
+			t.Error("Logged = false, want true once this morning is in")
+		}
+		if got.Message != "Today's morning weigh-in is logged." {
+			t.Errorf("Message = %q", got.Message)
+		}
+	})
+
+	t.Run("evening prompt ignores this morning's entry", func(t *testing.T) {
+		now := at(t, "2026-08-16 20:00") // evening
+		// This morning is logged, but the evening one is not — still a prompt.
+		entries := []db.Entry{entry(1, at(t, "2026-08-16 07:15"), 82.0, "")}
+		got := Build(entries, nil, now).Today
+		if got.Logged {
+			t.Error("Logged = true, want false — only the morning entry exists")
+		}
+		if got.Message != "No evening weigh-in logged yet today." {
+			t.Errorf("Message = %q", got.Message)
+		}
+	})
+
+	t.Run("yesterday's entry does not count as today", func(t *testing.T) {
+		now := at(t, "2026-08-16 08:00")
+		entries := []db.Entry{entry(1, at(t, "2026-08-15 07:15"), 82.0, "")}
+		if Build(entries, nil, now).Today.Logged {
+			t.Error("Logged = true, want false — that entry was yesterday")
+		}
+	})
+
+	t.Run("shown even with no trend data yet", func(t *testing.T) {
+		now := at(t, "2026-08-16 08:00")
+		got := Build(nil, nil, now)
+		if got.Empty == "" {
+			t.Fatal("expected the empty trend state")
+		}
+		if got.Today.Message == "" {
+			t.Error("today status is blank in the empty state, want the prompt")
+		}
+	})
+}
+
 func TestBuildGoalProgress(t *testing.T) {
 	now := at(t, "2026-08-16 12:00")
 	thisWeek := []db.Entry{

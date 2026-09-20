@@ -1,4 +1,7 @@
 {{define "summary"}}
+{{if .Today.Message}}
+	<p class="today-status {{if .Today.Logged}}today-status-done{{else}}today-status-todo{{end}}">{{.Today.Message}}</p>
+{{end}}
 {{if .Empty}}
 	<p class="empty">{{.Empty}}</p>
 {{else}}
