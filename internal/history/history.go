@@ -29,11 +29,21 @@ type Row struct {
 	OvernightLoss   bool
 	DailyDelta      string // set on evening entries: vs. that same day's morning
 	DailyGain       bool
+	Today           bool // recorded on the same calendar day as now
+}
+
+// sameDay reports whether a and b fall on the same calendar day, comparing
+// both in loc so a weigh-in stored in another zone is still judged against
+// the day the user is currently in.
+func sameDay(a, b time.Time, loc *time.Location) bool {
+	ay, am, ad := a.In(loc).Date()
+	by, bm, bd := b.In(loc).Date()
+	return ay == by && am == bm && ad == bd
 }
 
 // BuildRows converts entries into display-ready rows, including each row's
-// overnight/daily delta chip.
-func BuildRows(entries []db.Entry) []Row {
+// overnight/daily delta chip and its "today" flag (relative to now).
+func BuildRows(entries []db.Entry, now time.Time) []Row {
 	_, overnightByID, dailyByID := weight.ChronologicalWithDeltas(entries)
 
 	rows := make([]Row, len(entries))
@@ -49,6 +59,7 @@ func BuildRows(entries []db.Entry) []Row {
 			PeriodOverride:  e.PeriodOverride,
 			WeightKgRaw:     weight.FormatKgInput(e.WeightG),
 			WeightKgStr:     weight.FormatKg(e.WeightG),
+			Today:           sameDay(e.RecordedAt, now, now.Location()),
 		}
 		if period == "morning" {
 			r.PeriodLabel = "Morning"

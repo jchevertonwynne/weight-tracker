@@ -40,6 +40,9 @@
 		<span class="chip chip-{{.Period}}">{{.PeriodLabel}}</span>
 		<span class="entry-date">{{.RecordedAtLabel}}</span>
 		<span class="entry-weight">{{.WeightKgStr}} kg</span>
+		{{if .Today}}
+			<span class="chip chip-today">Today</span>
+		{{end}}
 		{{if .OvernightDelta}}
 			<span class="chip {{if .OvernightLoss}}chip-loss{{else}}chip-gain{{end}}">{{.OvernightDelta}} overnight</span>
 		{{end}}

@@ -55,7 +55,7 @@ func (s *Server) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	// The period select has no URL parameter, so it is still at its "All"
 	// default here — an empty periodParam, exactly what RenderEntriesList
 	// would pass for it.
-	historyRows := history.FilterRows(history.BuildRows(entries), "", historyPicker.Window(now))
+	historyRows := history.FilterRows(history.BuildRows(entries, now), "", historyPicker.Window(now))
 	data := struct {
 		NowDate        string
 		NowTime        string

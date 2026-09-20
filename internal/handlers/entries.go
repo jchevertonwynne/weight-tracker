@@ -52,7 +52,7 @@ func (s *Server) RenderEntriesList(w http.ResponseWriter, r *http.Request) {
 	}
 	periodParam, window := s.entriesWindow(r)
 	w.Header().Set("HX-Trigger", "entries-changed")
-	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries), periodParam, window)}
+	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries, s.now()), periodParam, window)}
 	if err := render.Named(w, s.tmpl, "entries-list", data); err != nil {
 		slog.ErrorContext(r.Context(), "render entries-list", "error", err)
 	}
@@ -92,7 +92,7 @@ func (s *Server) HandleEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	rows := history.BuildRows([]db.Entry{entry})
+	rows := history.BuildRows([]db.Entry{entry}, s.now())
 	if err := render.Named(w, s.tmpl, "row-edit", rows[0]); err != nil {
 		slog.ErrorContext(r.Context(), "render row-edit", "error", err)
 	}
@@ -109,7 +109,7 @@ func (s *Server) HandleCancelEdit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, row := range history.BuildRows(entries) {
+	for _, row := range history.BuildRows(entries, s.now()) {
 		if row.ID == id {
 			if err := render.Named(w, s.tmpl, "row", row); err != nil {
 				slog.ErrorContext(r.Context(), "render row", "error", err)
