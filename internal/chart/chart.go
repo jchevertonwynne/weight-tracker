@@ -5,6 +5,7 @@ package chart
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"weight-tracker/internal/db"
@@ -19,6 +20,42 @@ import (
 // used by other weight-tracking apps and lines up with a weekly cadence of
 // water/sodium fluctuation.
 const trendWindowDays = 7.0
+
+const (
+	// projectionFitDays is the trailing span of readings the forward
+	// projection fits its rate to. Long enough that one noisy day can't tilt
+	// the slope, short enough that it reflects the current trajectory rather
+	// than an older one that has since changed.
+	projectionFitDays = 28.0
+	// projectionHorizonDays is how far ahead the projection is drawn when no
+	// goal pulls it further — six weeks is long enough to be worth reading
+	// and short enough that the widening band hasn't yet said everything.
+	projectionHorizonDays = 42.0
+	// projectionMaxDays caps the horizon when an active goal would otherwise
+	// stretch it out. Past this the band is so wide it makes no claim worth
+	// drawing, so a goal that far off is left off the projection.
+	projectionMaxDays = 180.0
+	// projectionMaxAreaFraction caps the projection at this share of the whole
+	// chart width, so it never dwarfs the readings it grows from — a 42-day
+	// projection tacked onto a 7-day view looks absurd. A projection that is a
+	// fraction f of the total spans f/(1-f) of the visible data, so the day
+	// cap is derived from the visible span accordingly.
+	projectionMaxAreaFraction = 0.25
+	// projectionSigma is how many prediction standard errors the band spans
+	// on each side of the centre. ±1 matches the overnight chart's ±1 SD, so
+	// the two views make the same kind of claim about how much of the spread
+	// they cover rather than dressing one up as a fixed confidence percentage.
+	projectionSigma = 1.0
+	// projectionSamples is how many segments the curved band edges are drawn
+	// from; the interval widens as a square root, so too few would visibly
+	// cut the corner.
+	projectionSamples = 24
+	// projectionMinPoints and projectionMinSpanDays gate the fit: too few
+	// readings, or all bunched into a day or two, and the slope is noise
+	// dressed as a direction.
+	projectionMinPoints   = 4
+	projectionMinSpanDays = 10.0
+)
 
 // Point is one plotted point, sent to the client for Chart.js to render
 // directly. Date/Value are pre-formatted so the client's tooltip callback
@@ -56,10 +93,127 @@ type Data struct {
 	TrendEvening []XY            `json:"trendEvening,omitempty"`
 	Goals        []XY            `json:"goals,omitempty"`
 	Markers      []markers.Point `json:"markers,omitempty"`
+	// Projection is the forward extension of the trend, present only when the
+	// client asked for it (see Build's showProjection) and there is enough
+	// recent data to fit one. When set, the axis (XMax) has already been
+	// widened to show its full horizon.
+	Projection *ProjectionBand `json:"projection,omitempty"`
+}
+
+// ProjectionBand is the forward extension of the trend: a centre line
+// continuing the current rate, wrapped in a band that widens with the
+// horizon. The band is an ordinary-least-squares prediction interval, so it
+// widens for two honest reasons at once — a single reading scatters around
+// the line, and the slope itself is only estimated from a finite window — and
+// answers "where is this heading, and how sure can the data be?" rather than
+// projecting one confident line into the future.
+type ProjectionBand struct {
+	Center    []XY   `json:"center"`
+	Upper     []XY   `json:"upper"`
+	Lower     []XY   `json:"lower"`
+	RateLabel string `json:"rateLabel"` // current fitted rate, e.g. "-0.4 kg/week"
 }
 
 func dayNum(t time.Time) float64 {
 	return float64(t.Unix()) / 86400.0
+}
+
+// dayNumToTime is the inverse of dayNum, used to place projected points back
+// on the time axis. Sub-day precision is irrelevant to a forward projection,
+// so the round-trip through whole days costs nothing.
+func dayNumToTime(x float64) time.Time {
+	return time.Unix(int64(math.Round(x*86400)), 0).UTC()
+}
+
+// buildProjection fits an ordinary-least-squares line to the most recent
+// projectionFitDays of source (the same per-period readings the trend is
+// smoothed from) and extends it forward from the last trend value. It returns
+// the band, how far the axis must reach to show it, and ok=false when there
+// is too little recent data to project honestly.
+//
+// The centre is anchored at the last trend value rather than the fitted
+// line's own endpoint, so it continues the drawn trend line without a step;
+// the slope and the band width both come from the fit. The band is a
+// prediction interval, widening with the horizon because the residual scatter
+// and the slope uncertainty both push it out (the (x-x̄)²/Sxx term).
+//
+// maxHorizonDays caps how far ahead the band reaches, keeping it from dwarfing
+// the readings on a short range (see projectionMaxAreaFraction).
+func buildProjection(source, trend []rawPoint, allGoals []db.Goal, maxHorizonDays float64, today time.Time) (*ProjectionBand, time.Time, bool) {
+	if len(trend) == 0 {
+		return nil, time.Time{}, false
+	}
+	last := trend[len(trend)-1]
+
+	cutoff := last.x - projectionFitDays
+	var fit []rawPoint
+	for _, p := range source {
+		if p.x >= cutoff {
+			fit = append(fit, p)
+		}
+	}
+	n := len(fit)
+	// n-2 degrees of freedom for the residual standard error, so three points
+	// is the floor; projectionMinPoints keeps a step above that, and the span
+	// gate rejects a fit made from readings all clustered into a day or two.
+	if n < projectionMinPoints || fit[n-1].x-fit[0].x < projectionMinSpanDays {
+		return nil, time.Time{}, false
+	}
+
+	var sumX, sumY float64
+	for _, p := range fit {
+		sumX += p.x
+		sumY += p.val
+	}
+	meanX, meanY := sumX/float64(n), sumY/float64(n)
+
+	var sxx, sxy float64
+	for _, p := range fit {
+		dx := p.x - meanX
+		sxx += dx * dx
+		sxy += dx * (p.val - meanY)
+	}
+	if sxx == 0 {
+		return nil, time.Time{}, false
+	}
+	slope := sxy / sxx
+	intercept := meanY - slope*meanX
+
+	var sse float64
+	for _, p := range fit {
+		resid := p.val - (intercept + slope*p.x)
+		sse += resid * resid
+	}
+	s := math.Sqrt(sse / float64(n-2))
+
+	horizon := projectionHorizonDays
+	if goal, ok := goals.Current(allGoals, today); ok && slope != 0 {
+		// Extend the horizon to meet the goal only when the current rate is
+		// actually closing on it and it lands within the cap; a slope heading
+		// away, or a goal too far off to project usefully, keeps the default.
+		if d := (db.GramsToKg(goal.WeightG) - last.val) / slope; d > horizon && d <= projectionMaxDays {
+			horizon = d
+		}
+	}
+	// Never let the projection outgrow its share of the chart — on a short
+	// range this cap dominates, pulling a six-week default down to a few days.
+	if maxHorizonDays > 0 && horizon > maxHorizonDays {
+		horizon = maxHorizonDays
+	}
+
+	band := &ProjectionBand{RateLabel: fmt.Sprintf("%+.1f kg/week", slope*7)}
+	for i := 0; i <= projectionSamples; i++ {
+		d := horizon * float64(i) / float64(projectionSamples)
+		x := last.x + d
+		center := last.val + slope*d
+		se := s * math.Sqrt(1+1/float64(n)+(x-meanX)*(x-meanX)/sxx)
+		half := projectionSigma * se
+		ms := timerange.MsOf(dayNumToTime(x))
+		band.Center = append(band.Center, XY{X: ms, Y: center})
+		band.Upper = append(band.Upper, XY{X: ms, Y: center + half})
+		band.Lower = append(band.Lower, XY{X: ms, Y: center - half})
+	}
+	return band, dayNumToTime(last.x + horizon), true
 }
 
 func emptyMessage(seriesParam string) string {
@@ -208,7 +362,11 @@ func axisExtent(window timerange.Window, firstPoint, lastPoint, now time.Time) (
 }
 
 // Build assembles the chart JSON payload for one series/range combination.
-func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, today time.Time) Data {
+// When showProjection is set, a single-period series (morning/evening) is
+// extended with a forward projection band and the axis widened to show it;
+// the flag is ignored for the delta bar charts and the split "all" view,
+// which have no single trend line to continue.
+func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, rangeParam, seriesParam, fromParam, untilParam string, showProjection bool, today time.Time) Data {
 	chrono, overnightByID, dailyByID := weight.ChronologicalWithDeltas(allEntries)
 	window := timerange.Resolve(rangeParam, fromParam, untilParam, today)
 	isBar := seriesParam == "morning-delta" || seriesParam == "evening-delta" || seriesParam == "overnight" || seriesParam == "daily"
@@ -322,6 +480,26 @@ func Build(allEntries []db.Entry, allGoals []db.Goal, allMarkers []db.Marker, ra
 			data.TrendEvening = trendXY(filterByClass(trendSourcePts, "evening"), window)
 		} else {
 			data.Trend = trendXY(trendSourcePts, window)
+			// A single-period trend can be extended forward. Do this before
+			// clipping the goal line below so both reach the same widened
+			// axisUntil — that way the cone visibly runs up to the goal it is
+			// heading for, rather than the goal line stopping where the
+			// projection begins.
+			if showProjection {
+				fullTrend := rollingTrend(trendSourcePts, trendWindowDays)
+				// Cap the horizon at a share of the visible span so the
+				// projection stays at most projectionMaxAreaFraction of the
+				// whole chart once it is tacked on the end.
+				visibleDays := axisUntil.Sub(axisFrom).Hours() / 24
+				maxHorizon := visibleDays * projectionMaxAreaFraction / (1 - projectionMaxAreaFraction)
+				if band, end, ok := buildProjection(trendSourcePts, fullTrend, allGoals, maxHorizon, today); ok {
+					data.Projection = band
+					if end.After(axisUntil) {
+						axisUntil = end
+						data.XMax = timerange.MsOf(axisUntil)
+					}
+				}
+			}
 		}
 
 		if len(allGoals) > 0 {

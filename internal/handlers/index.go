@@ -118,6 +118,11 @@ func (s *Server) HandleChart(w http.ResponseWriter, r *http.Request) {
 	}
 	fromParam := r.URL.Query().Get("from")
 	untilParam := r.URL.Query().Get("until")
+	// The projection band widens the axis, so — unlike the raw/trend toggles,
+	// which only hide client-side datasets — it changes what the server draws
+	// and is read here. The client submits it as the show-projection checkbox
+	// (see static/chart-app.js), "on" when ticked.
+	showProjection := r.URL.Query().Get("show-projection") == "on"
 	entries, err := db.ListEntries(r.Context(), s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -133,7 +138,7 @@ func (s *Server) HandleChart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	data := chart.Build(entries, goalList, markerList, rangeParam, seriesParam, fromParam, untilParam, s.now())
+	data := chart.Build(entries, goalList, markerList, rangeParam, seriesParam, fromParam, untilParam, showProjection, s.now())
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

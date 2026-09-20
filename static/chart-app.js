@@ -478,6 +478,46 @@ function calendarTicks(axis) {
 					tension: 0,
 				});
 			}
+
+			// The projection: a shaded prediction band with a dashed centre
+			// line continuing the current rate. The band is two edge datasets
+			// with the fill between them — upper first, then lower with
+			// fill:'-1' pointing back at it. The edges carry isProjectionBand
+			// so the tooltip skips them (see its filter below); only the centre
+			// line, which names the fitted rate, answers a hover.
+			if (data.projection && data.projection.center && data.projection.center.length >= 2) {
+				const band = cssVar('--projection-band');
+				datasets.push({
+					type: 'line',
+					label: 'Projection upper',
+					data: data.projection.upper,
+					borderWidth: 0,
+					pointRadius: 0,
+					tension: 0.2,
+					isProjectionBand: true,
+				});
+				datasets.push({
+					type: 'line',
+					label: 'Projection lower',
+					data: data.projection.lower,
+					backgroundColor: band,
+					fill: '-1',
+					borderWidth: 0,
+					pointRadius: 0,
+					tension: 0.2,
+					isProjectionBand: true,
+				});
+				datasets.push({
+					type: 'line',
+					label: `Projection${data.projection.rateLabel ? ' (' + data.projection.rateLabel + ')' : ''}`,
+					data: data.projection.center,
+					borderColor: cssVar('--primary'),
+					borderDash: [2, 3],
+					borderWidth: 2,
+					pointRadius: 0,
+					tension: 0.2,
+				});
+			}
 		}
 
 		return {
@@ -526,6 +566,9 @@ function calendarTicks(axis) {
 				plugins: {
 					legend: { display: false },
 					tooltip: {
+						// The band's upper/lower edges are structural, not
+						// readings — hovering them should say nothing.
+						filter: (item) => !(item.dataset && item.dataset.isProjectionBand),
 						callbacks: {
 							// Raw weigh-ins arrive with their date and value
 							// preformatted by the server. The trend and goal
@@ -616,13 +659,21 @@ function calendarTicks(axis) {
 	// chart is drawn entirely from /chart by this script (see the note in
 	// HandleIndex), so there is no server-rendered chart to flash the default
 	// before this corrects it.
-	const controlParams = { 'show-raw': 'raw', 'show-trend': 'trend' };
+	// Each toggle round-trips through the query key in `param`, defaulting to
+	// `def`. Only a toggle away from its default is written — raw and trend
+	// default on, projection off — so an untouched card keeps "/" canonical.
+	const controlParams = {
+		'show-raw': { param: 'raw', def: true },
+		'show-trend': { param: 'trend', def: true },
+		'show-projection': { param: 'projection', def: false },
+	};
 
 	function applyControlsFromURL() {
 		const params = new URLSearchParams(window.location.search);
-		Object.entries(controlParams).forEach(([field, param]) => {
+		Object.entries(controlParams).forEach(([field, { param }]) => {
 			const box = form.elements[field];
-			if (box && params.get(param) === '0') box.checked = false;
+			const value = params.get(param);
+			if (box && value !== null) box.checked = value === '1';
 		});
 	}
 
@@ -631,12 +682,13 @@ function calendarTicks(axis) {
 	// raw rather than leaving the chart blank.
 	function syncControlsURL() {
 		const url = new URL(window.location.href);
-		Object.entries(controlParams).forEach(([field, param]) => {
+		Object.entries(controlParams).forEach(([field, { param, def }]) => {
 			const box = form.elements[field];
-			if (box && !box.checked) {
-				url.searchParams.set(param, '0');
-			} else {
+			if (!box) return;
+			if (box.checked === def) {
 				url.searchParams.delete(param);
+			} else {
+				url.searchParams.set(param, box.checked ? '1' : '0');
 			}
 		});
 		window.history.replaceState(null, '', url);

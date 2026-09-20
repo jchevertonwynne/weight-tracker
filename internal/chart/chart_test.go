@@ -160,7 +160,7 @@ func TestBuild(t *testing.T) {
 	}
 
 	t.Run("all series plots every entry", func(t *testing.T) {
-		got := Build(entries, nil, nil, "30", "all", "", "", today)
+		got := Build(entries, nil, nil, "30", "all", "", "", false, today)
 		if !got.HasData {
 			t.Fatal("HasData = false, want true")
 		}
@@ -181,7 +181,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("morning series filters by period and labels points", func(t *testing.T) {
-		got := Build(entries, nil, nil, "30", "morning", "", "", today)
+		got := Build(entries, nil, nil, "30", "morning", "", "", false, today)
 		if len(got.Points) != 3 {
 			t.Fatalf("got %d points, want 3 morning entries", len(got.Points))
 		}
@@ -199,7 +199,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("delta series is a bar chart with signed labels and no trend", func(t *testing.T) {
-		got := Build(entries, nil, nil, "30", "morning-delta", "", "", today)
+		got := Build(entries, nil, nil, "30", "morning-delta", "", "", false, today)
 		if !got.IsBar {
 			t.Error("IsBar = false, want true for a delta series")
 		}
@@ -219,11 +219,11 @@ func TestBuild(t *testing.T) {
 
 	t.Run("goal lines are omitted from delta charts but present on value charts", func(t *testing.T) {
 		goals := []db.Goal{{ID: 1, WeightG: 80000, EffectiveFrom: at(t, "2026-08-01 00:00")}}
-		value := Build(entries, goals, nil, "30", "all", "", "", today)
+		value := Build(entries, goals, nil, "30", "all", "", "", false, today)
 		if len(value.Goals) == 0 {
 			t.Error("value chart has no goal line, want one")
 		}
-		delta := Build(entries, goals, nil, "30", "morning-delta", "", "", today)
+		delta := Build(entries, goals, nil, "30", "morning-delta", "", "", false, today)
 		if len(delta.Goals) != 0 {
 			t.Errorf("delta chart has %d goal points, want none", len(delta.Goals))
 		}
@@ -237,7 +237,7 @@ func TestBuild(t *testing.T) {
 	t.Run("trend is smoothed using data from before the visible range", func(t *testing.T) {
 		// Visible range starts on the 15th, so the 14th's two readings are
 		// off-chart but must still feed the first visible trend value.
-		got := Build(entries, nil, nil, "custom", "all", "2026-08-15", "", today)
+		got := Build(entries, nil, nil, "custom", "all", "2026-08-15", "", false, today)
 		if len(got.Points) != 3 {
 			t.Fatalf("got %d visible points, want 3", len(got.Points))
 		}
@@ -265,7 +265,7 @@ func TestBuild(t *testing.T) {
 
 	t.Run("a single visible point produces no trend line", func(t *testing.T) {
 		// A one-point line conveys nothing, so the trend is suppressed.
-		got := Build(entries, nil, nil, "custom", "all", "2026-08-16", "", today)
+		got := Build(entries, nil, nil, "custom", "all", "2026-08-16", "", false, today)
 		if len(got.Points) != 1 {
 			t.Fatalf("got %d visible points, want 1", len(got.Points))
 		}
@@ -278,7 +278,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("a single point produces no trend line", func(t *testing.T) {
-		got := Build(entries[:1], nil, nil, "30", "all", "", "", today)
+		got := Build(entries[:1], nil, nil, "30", "all", "", "", false, today)
 		if len(got.TrendMorning) != 0 {
 			t.Errorf("got %d morning trend points for a single entry, want none", len(got.TrendMorning))
 		}
@@ -288,7 +288,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("an empty range reports why", func(t *testing.T) {
-		got := Build(entries, nil, nil, "custom", "all", "2027-01-01", "2027-02-01", today)
+		got := Build(entries, nil, nil, "custom", "all", "2027-01-01", "2027-02-01", false, today)
 		if got.HasData {
 			t.Error("HasData = true for an empty range")
 		}
@@ -301,7 +301,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("empty-state message is specific to the series", func(t *testing.T) {
-		got := Build(entries[:1], nil, nil, "30", "morning-delta", "", "", today)
+		got := Build(entries[:1], nil, nil, "30", "morning-delta", "", "", false, today)
 		if got.HasData {
 			t.Fatal("HasData = true, want false with only one morning entry")
 		}
@@ -311,7 +311,7 @@ func TestBuild(t *testing.T) {
 	})
 
 	t.Run("no entries at all", func(t *testing.T) {
-		got := Build(nil, nil, nil, "30", "all", "", "", today)
+		got := Build(nil, nil, nil, "30", "all", "", "", false, today)
 		if got.HasData || got.Empty == "" {
 			t.Errorf("got %+v, want an empty result with a message", got)
 		}
@@ -357,7 +357,7 @@ func TestBuildAxisSpansTheRequestedRange(t *testing.T) {
 	}
 
 	t.Run("a preset covers its whole span", func(t *testing.T) {
-		got := Build(entries, nil, nil, "30", "morning", "", "", today)
+		got := Build(entries, nil, nil, "30", "morning", "", "", false, today)
 		wantFrom := testsupport.At(t, "2026-07-18 00:00") // 30 days back, inclusive
 		if got.XMin != wantFrom.UnixMilli() {
 			t.Errorf("XMin = %s, want the range start %s",
@@ -379,7 +379,7 @@ func TestBuildAxisSpansTheRequestedRange(t *testing.T) {
 	})
 
 	t.Run("a custom range uses both of its bounds", func(t *testing.T) {
-		got := Build(entries, nil, nil, "custom", "morning", "2026-08-01", "2026-08-20", today)
+		got := Build(entries, nil, nil, "custom", "morning", "2026-08-01", "2026-08-20", false, today)
 		if want := testsupport.At(t, "2026-08-01 00:00").UnixMilli(); got.XMin != want {
 			t.Errorf("XMin = %s, want %s", time.UnixMilli(got.XMin), time.UnixMilli(want))
 		}
@@ -390,12 +390,122 @@ func TestBuildAxisSpansTheRequestedRange(t *testing.T) {
 	})
 
 	t.Run("all time is exactly as wide as the data", func(t *testing.T) {
-		got := Build(entries, nil, nil, "all", "morning", "", "", today)
+		got := Build(entries, nil, nil, "all", "morning", "", "", false, today)
 		if got.XMin != entries[0].RecordedAt.UnixMilli() {
 			t.Errorf("XMin = %s, want the first reading", time.UnixMilli(got.XMin))
 		}
 		if got.XMax != entries[2].RecordedAt.UnixMilli() {
 			t.Errorf("XMax = %s, want the last reading", time.UnixMilli(got.XMax))
+		}
+	})
+}
+
+func TestBuildProjection(t *testing.T) {
+	// A long run of morning readings falling a steady ~0.1 kg/day, with a small
+	// alternating scatter around that line so the fit has a real residual
+	// standard error (and thus a band that genuinely widens) rather than a
+	// perfect line where the width would be floating-point noise. The "all"
+	// view is wide enough that the area cap (see projectionMaxAreaFraction)
+	// doesn't clip the default horizon.
+	today := at(t, "2026-06-01 12:00")
+	var entries []db.Entry
+	start := at(t, "2025-08-01 07:00")
+	for i := 0; i < 300; i++ {
+		noise := 0.3
+		if i%2 == 0 {
+			noise = -0.3
+		}
+		entries = append(entries, entry(int64(i+1), start.AddDate(0, 0, i), 90.0-0.1*float64(i)+noise, ""))
+	}
+
+	t.Run("off by default", func(t *testing.T) {
+		got := Build(entries, nil, nil, "all", "morning", "", "", false, today)
+		if got.Projection != nil {
+			t.Fatal("Projection set with showProjection=false")
+		}
+	})
+
+	t.Run("extends the trend and widens the axis", func(t *testing.T) {
+		got := Build(entries, nil, nil, "all", "morning", "", "", true, today)
+		if got.Projection == nil {
+			t.Fatal("Projection = nil, want a band")
+		}
+		p := got.Projection
+		if len(p.Center) != projectionSamples+1 {
+			t.Fatalf("got %d centre points, want %d", len(p.Center), projectionSamples+1)
+		}
+		// The centre continues the fall, so it ends below where it began.
+		if p.Center[len(p.Center)-1].Y >= p.Center[0].Y {
+			t.Errorf("centre did not descend: first %.2f, last %.2f", p.Center[0].Y, p.Center[len(p.Center)-1].Y)
+		}
+		// The band is a prediction interval, so it is wider at the far end
+		// than at the anchor.
+		nearWidth := p.Upper[0].Y - p.Lower[0].Y
+		farWidth := p.Upper[len(p.Upper)-1].Y - p.Lower[len(p.Lower)-1].Y
+		if farWidth <= nearWidth {
+			t.Errorf("band did not widen: near %.3f, far %.3f", nearWidth, farWidth)
+		}
+		// Showing the projection pushes the axis past the last reading.
+		lastReading := entries[len(entries)-1].RecordedAt.UnixMilli()
+		if got.XMax <= lastReading {
+			t.Errorf("XMax = %s, want it past the last reading at %s", time.UnixMilli(got.XMax), time.UnixMilli(lastReading))
+		}
+		if p.RateLabel == "" {
+			t.Error("RateLabel is empty")
+		}
+	})
+
+	t.Run("extends the horizon to meet an active goal", func(t *testing.T) {
+		// The last reading sits near 60 kg; a goal a few kg below it is further
+		// out than the default six-week horizon but well inside the wide "all"
+		// view's area cap, so the band should run out to where the centre meets
+		// it rather than stopping at the default.
+		goalList := []db.Goal{{ID: 1, WeightG: db.KgToGrams(55.0), EffectiveFrom: start}}
+		withoutGoal := Build(entries, nil, nil, "all", "morning", "", "", true, today)
+		withGoal := Build(entries, goalList, nil, "all", "morning", "", "", true, today)
+		if withGoal.XMax <= withoutGoal.XMax {
+			t.Errorf("goal did not extend the horizon: with %s, without %s",
+				time.UnixMilli(withGoal.XMax), time.UnixMilli(withoutGoal.XMax))
+		}
+		// The centre should arrive at roughly the goal weight.
+		last := withGoal.Projection.Center[len(withGoal.Projection.Center)-1].Y
+		if !nearlyEqual(last, 55.0) {
+			t.Errorf("centre ends at %.2f, want it near the 55.0 kg goal", last)
+		}
+	})
+
+	t.Run("caps the horizon to a share of a short range", func(t *testing.T) {
+		// On a 7-day view the fit still draws on the full history, but the band
+		// must not run 42 days past a week of readings — it is capped to a
+		// quarter of the chart, i.e. a third of the ~7-day visible span.
+		got := Build(entries, nil, nil, "7", "morning", "", "", true, today)
+		if got.Projection == nil {
+			t.Fatal("Projection = nil, want a band")
+		}
+		c := got.Projection.Center
+		spanDays := float64(c[len(c)-1].X-c[0].X) / float64(24*time.Hour/time.Millisecond)
+		if spanDays <= 0 || spanDays > 3 {
+			t.Errorf("projection span = %.1f days, want a small fraction of the 7-day view", spanDays)
+		}
+	})
+
+	t.Run("declines to project from too little recent data", func(t *testing.T) {
+		// Only two readings, and they are old relative to today, so the fit
+		// window is empty of anything worth a slope.
+		sparse := []db.Entry{
+			entry(1, at(t, "2026-02-01 07:00"), 90.0, ""),
+			entry(2, at(t, "2026-02-02 07:00"), 89.9, ""),
+		}
+		got := Build(sparse, nil, nil, "all", "morning", "", "", true, today)
+		if got.Projection != nil {
+			t.Error("projected from two stale readings, want no band")
+		}
+	})
+
+	t.Run("never projects a delta bar chart", func(t *testing.T) {
+		got := Build(entries, nil, nil, "all", "morning-delta", "", "", true, today)
+		if got.Projection != nil {
+			t.Error("Projection set for a delta series")
 		}
 	})
 }
