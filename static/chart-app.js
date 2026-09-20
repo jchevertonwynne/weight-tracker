@@ -605,6 +605,43 @@ function calendarTicks(axis) {
 		}
 	}
 
+	// The raw-data and trend-line toggles are mirrored into the query string,
+	// alongside the range the picker writes (see syncURL in static/app.js), so
+	// a reload, a bookmark or a shared link comes back to the same series. Both
+	// default to on, so — like the picker sitting at its own default — only a
+	// toggle turned *off* is written; an untouched card keeps "/" as the
+	// canonical address.
+	//
+	// Reading these back client-side is enough here: unlike the range, the
+	// chart is drawn entirely from /chart by this script (see the note in
+	// HandleIndex), so there is no server-rendered chart to flash the default
+	// before this corrects it.
+	const controlParams = { 'show-raw': 'raw', 'show-trend': 'trend' };
+
+	function applyControlsFromURL() {
+		const params = new URLSearchParams(window.location.search);
+		Object.entries(controlParams).forEach(([field, param]) => {
+			const box = form.elements[field];
+			if (box && params.get(param) === '0') box.checked = false;
+		});
+	}
+
+	// Called after each render so it reflects the checkbox state buildConfig
+	// actually drew — including the both-off fallback there, which re-checks
+	// raw rather than leaving the chart blank.
+	function syncControlsURL() {
+		const url = new URL(window.location.href);
+		Object.entries(controlParams).forEach(([field, param]) => {
+			const box = form.elements[field];
+			if (box && !box.checked) {
+				url.searchParams.set(param, '0');
+			} else {
+				url.searchParams.delete(param);
+			}
+		});
+		window.history.replaceState(null, '', url);
+	}
+
 	function refreshChart() {
 		const params = new URLSearchParams(new FormData(form));
 		fetch('/chart?' + params.toString())
@@ -613,6 +650,7 @@ function calendarTicks(axis) {
 				return res.json();
 			})
 			.then(renderChart)
+			.then(syncControlsURL)
 			.catch((err) => {
 				console.error('chart refresh failed', err);
 				showFailure('Could not load chart data: ' + (err && err.message ? err.message : err));
@@ -660,6 +698,7 @@ function calendarTicks(axis) {
 	document.body.addEventListener('markers-changed', refreshChart);
 	window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshChart);
 
+	applyControlsFromURL();
 	refreshChart();
 })();
 
