@@ -381,11 +381,14 @@ form.htmx-request button[type="submit"]::before {
 }
 
 .entry-row {
+	/* Two stacked lines, so every row has the same shape regardless of how
+	   wide its content is: line 1 is the weigh-in (chip, date, weight), line 2
+	   pairs the delta chip with the Edit/Delete actions. Previously the whole
+	   thing was one wrapping flex line, so the actions dropped to a second line
+	   on only the wider rows — the inconsistency this replaces. */
 	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 0.5rem;
+	flex-direction: column;
+	gap: 0.4rem;
 	padding: 0.75rem 0;
 	border-bottom: 1px solid var(--row-border);
 }
@@ -399,6 +402,23 @@ form.htmx-request button[type="submit"]::before {
 	align-items: center;
 	gap: 0.6rem;
 	flex-wrap: wrap;
+}
+
+/* Line 2: delta chip on the left, actions on the right. justify-content
+   spaces them apart; when there is no delta chip, .entry-actions' own
+   margin-left: auto still keeps the actions right-aligned. */
+.entry-meta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+
+.entry-deltas {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
 }
 
 .entry-date {

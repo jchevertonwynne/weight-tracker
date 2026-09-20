@@ -40,16 +40,20 @@
 		<span class="chip chip-{{.Period}}">{{.PeriodLabel}}</span>
 		<span class="entry-date">{{.RecordedAtLabel}}</span>
 		<span class="entry-weight">{{.WeightKgStr}} kg</span>
-		{{if .OvernightDelta}}
-			<span class="chip {{if .OvernightLoss}}chip-loss{{else}}chip-gain{{end}}">{{.OvernightDelta}} overnight</span>
-		{{end}}
-		{{if .DailyDelta}}
-			<span class="chip {{if .DailyGain}}chip-gain{{else}}chip-loss{{end}}">{{.DailyDelta}} today</span>
-		{{end}}
 	</div>
-	<div class="entry-actions">
-		<button class="btn-text" hx-get="/entries/{{.ID}}/edit" hx-target="#entry-{{.ID}}" hx-swap="outerHTML">Edit</button>
-		<button class="btn-text btn-danger" hx-delete="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter" hx-confirm="Delete this entry?">Delete</button>
+	<div class="entry-meta">
+		<div class="entry-deltas">
+			{{if .OvernightDelta}}
+				<span class="chip {{if .OvernightLoss}}chip-loss{{else}}chip-gain{{end}}">{{.OvernightDelta}} overnight</span>
+			{{end}}
+			{{if .DailyDelta}}
+				<span class="chip {{if .DailyGain}}chip-gain{{else}}chip-loss{{end}}">{{.DailyDelta}} today</span>
+			{{end}}
+		</div>
+		<div class="entry-actions">
+			<button class="btn-text" hx-get="/entries/{{.ID}}/edit" hx-target="#entry-{{.ID}}" hx-swap="outerHTML">Edit</button>
+			<button class="btn-text btn-danger" hx-delete="/entries/{{.ID}}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter" hx-confirm="Delete this entry?">Delete</button>
+		</div>
 	</div>
 </div>
 {{end}}
