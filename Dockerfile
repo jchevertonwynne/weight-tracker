@@ -2,7 +2,7 @@
 # produces a bare binary for the systemd deployment; both are the same code,
 # and this file exists alongside it during the migration.
 
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27 AS build
 WORKDIR /src
 # Module files before the source, so the download layer caches across source
 # edits. Worth a layer now: the graph pulls OpenTelemetry, gRPC and the
