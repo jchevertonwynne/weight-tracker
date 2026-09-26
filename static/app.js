@@ -420,3 +420,23 @@ function initTimeRangePicker(root) {
 }
 
 document.querySelectorAll('[data-time-range-picker]').forEach(initTimeRangePicker);
+
+// The "logged today?" nudge in the weekly summary depends on the time of day
+// (morning before noon, evening after) and the date, but the page only
+// renders it once. A tab opened in the morning and returned to in the
+// evening would still be congratulating you on the morning weigh-in, so
+// re-fetch the summary whenever the page comes back into view, and every
+// few minutes while it stays in view. A dedicated event rather than
+// entries-changed, which would also redraw the charts for no reason.
+const SUMMARY_REFRESH_MS = 5 * 60 * 1000;
+let summaryRefreshedAt = Date.now();
+function refreshSummary() {
+	if (document.visibilityState !== 'visible') return;
+	// visibilitychange and focus usually arrive together; one fetch will do.
+	if (Date.now() - summaryRefreshedAt < 30 * 1000) return;
+	summaryRefreshedAt = Date.now();
+	document.body.dispatchEvent(new Event('summary-stale'));
+}
+document.addEventListener('visibilitychange', refreshSummary);
+window.addEventListener('focus', refreshSummary);
+setInterval(refreshSummary, SUMMARY_REFRESH_MS);
