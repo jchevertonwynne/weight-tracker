@@ -5,7 +5,10 @@
 		hx-get="/entries"
 		hx-target="#entries-list"
 		hx-swap="outerHTML"
-		hx-trigger="change">
+		hx-trigger="change, time-passed[!document.querySelector('.entry-row-editing')] from:body">
+		{{/* time-passed (see static/app.js) re-renders the list so its
+		     "Today"/"Yesterday" labels follow the clock, but not over a row
+		     that is mid-edit, which would throw away the unsaved change. */}}
 		<div class="chart-controls-row">
 			<label class="field">
 				<span>Period</span>

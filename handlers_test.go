@@ -115,6 +115,27 @@ func TestHandleCreateAcceptsValidWeights(t *testing.T) {
 	}
 }
 
+// Only a write should announce entries-changed: the summary and every chart
+// redraw on it, and a plain GET /entries (a filter change, or the periodic
+// refresh that keeps the history's "Today" labels current) changes none of
+// what they show.
+func TestEntriesListOnlyTriggersEntriesChangedOnWrites(t *testing.T) {
+	s := newTestServer(t)
+	rec := postForm(t, s.HandleCreate, http.MethodPost, "/entries", entryForm("82.4"))
+	if got := rec.Header().Get("HX-Trigger"); got != "entries-changed" {
+		t.Errorf("POST /entries HX-Trigger = %q, want %q", got, "entries-changed")
+	}
+
+	rec = httptest.NewRecorder()
+	s.RenderEntriesList(rec, httptest.NewRequest(http.MethodGet, "/entries", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /entries status = %d, want 200 (body: %s)", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "" {
+		t.Errorf("GET /entries HX-Trigger = %q, want none", got)
+	}
+}
+
 func TestHandleCreateRejectsInvalidPeriodOverride(t *testing.T) {
 	s := newTestServer(t)
 	form := entryForm("82.4")

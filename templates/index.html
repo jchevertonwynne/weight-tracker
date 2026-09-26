@@ -24,7 +24,7 @@
 		<div class="tab-panel" id="tab-log">
 			<section class="card">
 				<h2>Weekly summary</h2>
-				<div hx-get="/summary" hx-trigger="entries-changed from:body, summary-stale from:body" hx-swap="innerHTML">
+				<div hx-get="/summary" hx-trigger="entries-changed from:body, time-passed from:body" hx-swap="innerHTML">
 					{{template "summary" .Summary}}
 				</div>
 			</section>

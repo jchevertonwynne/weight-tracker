@@ -51,7 +51,13 @@ func (s *Server) RenderEntriesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	periodParam, window := s.entriesWindow(r)
-	w.Header().Set("HX-Trigger", "entries-changed")
+	// Only a write changes the data the summary and charts are drawn from.
+	// A plain GET — a filter change, or the periodic refresh that keeps the
+	// "Today"/"Yesterday" labels current — would otherwise redraw all of
+	// them for nothing.
+	if r.Method != http.MethodGet {
+		w.Header().Set("HX-Trigger", "entries-changed")
+	}
 	data := struct{ Rows []history.Row }{Rows: history.FilterRows(history.BuildRows(entries, s.now()), periodParam, window)}
 	if err := render.Named(w, s.tmpl, "entries-list", data); err != nil {
 		slog.ErrorContext(r.Context(), "render entries-list", "error", err)

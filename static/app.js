@@ -421,22 +421,24 @@ function initTimeRangePicker(root) {
 
 document.querySelectorAll('[data-time-range-picker]').forEach(initTimeRangePicker);
 
-// The "logged today?" nudge in the weekly summary depends on the time of day
-// (morning before noon, evening after) and the date, but the page only
-// renders it once. A tab opened in the morning and returned to in the
-// evening would still be congratulating you on the morning weigh-in, so
-// re-fetch the summary whenever the page comes back into view, and every
-// few minutes while it stays in view. A dedicated event rather than
+// Several things on the page are relative to the clock: the "logged today?"
+// nudge in the weekly summary depends on the date and the time of day
+// (morning before noon, evening after), and history rows are labelled
+// "Today"/"Yesterday". The page only renders them once, so a tab opened in
+// the morning and returned to in the evening would still be congratulating
+// you on the morning weigh-in. Announce time-passed whenever the page comes
+// back into view, and every few minutes while it stays in view, and let
+// those parts re-fetch themselves. A dedicated event rather than
 // entries-changed, which would also redraw the charts for no reason.
-const SUMMARY_REFRESH_MS = 5 * 60 * 1000;
-let summaryRefreshedAt = Date.now();
-function refreshSummary() {
+const TIME_PASSED_INTERVAL_MS = 5 * 60 * 1000;
+let timePassedAt = Date.now();
+function announceTimePassed() {
 	if (document.visibilityState !== 'visible') return;
-	// visibilitychange and focus usually arrive together; one fetch will do.
-	if (Date.now() - summaryRefreshedAt < 30 * 1000) return;
-	summaryRefreshedAt = Date.now();
-	document.body.dispatchEvent(new Event('summary-stale'));
+	// visibilitychange and focus usually arrive together; one refresh will do.
+	if (Date.now() - timePassedAt < 30 * 1000) return;
+	timePassedAt = Date.now();
+	document.body.dispatchEvent(new Event('time-passed'));
 }
-document.addEventListener('visibilitychange', refreshSummary);
-window.addEventListener('focus', refreshSummary);
-setInterval(refreshSummary, SUMMARY_REFRESH_MS);
+document.addEventListener('visibilitychange', announceTimePassed);
+window.addEventListener('focus', announceTimePassed);
+setInterval(announceTimePassed, TIME_PASSED_INTERVAL_MS);
