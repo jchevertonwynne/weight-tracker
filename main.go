@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	// Embeds the IANA timezone database in the binary, used only when the
@@ -61,6 +64,7 @@ func run() error {
 	pprofAddr := flag.String("pprof-addr", ":6060", "listen address for pprof debug endpoints; never expose this outside the cluster")
 	devUser := flag.String("dev-user", "", "email to assume when no Access header is present; local development only")
 	allowedEmails := flag.String("allowed-emails", "", "comma-separated addresses this hostname's Cloudflare Access policy admits; anyone else is refused even with a live Access session")
+	backupTokenFile := flag.String("backup-token-file", "", "file holding the bearer token the in-cluster backup job presents for /backup.db; without it, /backup.db needs an Access identity like every other route")
 	flag.Parse()
 
 	allow := access.NewAllowlist(*allowedEmails, *devUser)
@@ -79,6 +83,17 @@ func run() error {
 		// state means the ConfigMap never reached the flag, and a pod that
 		// crashloops says so where a pod serving everybody does not.
 		return fmt.Errorf("access config: %w (pass -allowed-emails, or -dev-user for a local run)", err)
+	}
+
+	backupToken, err := readBackupToken(*backupTokenFile)
+	if err != nil {
+		return fmt.Errorf("backup token: %w", err)
+	}
+	if backupToken == "" {
+		// Not fatal: the failure is contained. /backup.db then refuses every
+		// caller without an Access identity, so the hourly backup fails and
+		// says so (KubeJobFailed, then BackupStale), and nothing is exposed.
+		slog.Warn("no -backup-token-file; /backup.db will refuse the backup job")
 	}
 
 	go profiling.ListenAndServe(*pprofAddr)
@@ -104,7 +119,7 @@ func run() error {
 	defer sqlDB.Close()
 
 	app := handlers.New(sqlDB, templatesFS, staticFS, time.Now)
-	mux, appMux := routes(app, allow)
+	mux, appMux := routes(app, allow, backupToken)
 
 	journalMode, err := db.JournalMode(sqlDB)
 	if err != nil {
@@ -142,12 +157,12 @@ func run() error {
 //   - /static/ and /sw.js are the same bytes for everyone and carry nothing
 //     about anybody.
 //   - /backup.db is fetched hourly by the in-cluster backup CronJob, which has
-//     no session either — and by the Download backup link on the settings
-//     page, which does. See allowBackup.
+//     no session and presents a token instead — and by the Download backup
+//     link on the settings page, which has a session. See allowBackup.
 //
 // It returns the application mux alongside the one to serve, which is only
 // for metrics labelling — see the call site.
-func routes(app *handlers.Server, allow access.Allowlist) (http.Handler, *http.ServeMux) {
+func routes(app *handlers.Server, allow access.Allowlist, backupToken string) (http.Handler, *http.ServeMux) {
 	appMux := http.NewServeMux()
 	app.RegisterRoutes(appMux)
 
@@ -156,7 +171,7 @@ func routes(app *handlers.Server, allow access.Allowlist) (http.Handler, *http.S
 	for _, pattern := range []string{"GET /healthz", "GET /static/", "GET /sw.js"} {
 		mux.Handle(pattern, appMux)
 	}
-	mux.Handle("GET /backup.db", allowBackup(allow, appMux))
+	mux.Handle("GET /backup.db", allowBackup(allow, backupToken, appMux))
 	mux.Handle("/", authenticate(allow, appMux))
 	return mux, appMux
 }
@@ -207,21 +222,72 @@ func authenticate(allow access.Allowlist, next http.Handler) http.Handler {
 // allowBackup guards /backup.db, which has two legitimate callers with
 // nothing in common.
 //
-// The hourly CronJob reaches the Service directly from inside the cluster, so
-// it has no Access session and sends no header; refusing it would end the
-// backups. The Download backup link on the settings page comes through
-// cloudflared, so it always carries one. A header that names someone off the
-// allowlist is therefore a person whose session outlived their removal, and
-// this file is every weigh-in in one download.
-func allowBackup(allow access.Allowlist, next http.Handler) http.Handler {
+// The Download backup link on the settings page comes through cloudflared, so
+// it carries an Access identity and is held to the allowlist like any other
+// route: a header naming someone off the list is a person whose session
+// outlived their removal, and this file is every weigh-in in one download.
+//
+// The hourly CronJob reaches the Service from inside the cluster, so it has no
+// Access session and sends no header. It used to be admitted for exactly that,
+// which also admitted everyone else with no header — including the whole
+// internet, through cloudflared, the moment the Access application in front of
+// this hostname were removed or bypassed. That is the failure authenticate
+// refuses a missing header to prevent, and this route undid it for the one
+// response holding everything. So the job now presents a bearer token, and a
+// request with neither an identity nor that token is refused. With no token
+// configured, nothing gets in that way at all.
+func allowBackup(allow access.Allowlist, token string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if email := access.NormalizeEmail(r.Header.Get(access.EmailHeader)); email != "" && !allow.Admits(email) {
-			slog.WarnContext(r.Context(), "refusing a backup for a caller who is not on this hostname's allowlist")
-			http.Error(w, "not on this app's allowlist", http.StatusForbidden)
+		// The whole database, so never a shared cache either.
+		w.Header().Set("Cache-Control", "no-store")
+
+		if email, ok := access.Email(r, allow.DevUser()); ok {
+			if !allow.Admits(email) {
+				slog.WarnContext(r.Context(), "refusing a backup for a caller who is not on this hostname's allowlist")
+				http.Error(w, "not on this app's allowlist", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !bearerMatches(r, token) {
+			slog.WarnContext(r.Context(), "refusing a backup with neither an Access identity nor the backup token")
+			http.Error(w, "not authenticated", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// bearerMatches reports whether r presents token as a bearer credential. An
+// empty token matches nothing, so an unconfigured app cannot be satisfied by
+// an empty Authorization header.
+func bearerMatches(r *http.Request, token string) bool {
+	if token == "" {
+		return false
+	}
+	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+}
+
+// readBackupToken loads the backup job's token from path, or returns "" when
+// no path is given. A path that is given but empty is an error rather than
+// "no token": it means the Secret is mounted and wrong, and a pod that
+// crashloops says so where one quietly refusing every backup takes an hour
+// and an alert to notice.
+func readBackupToken(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(b))
+	if token == "" {
+		return "", errors.New(path + " is empty")
+	}
+	return token, nil
 }
 
 // refuseCrossOrigin refuses any state-changing request that another site made
