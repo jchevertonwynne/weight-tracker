@@ -1,6 +1,6 @@
-# Built for the k3s cluster on the Pi. The Makefile's build-pi target still
-# produces a bare binary for the systemd deployment; both are the same code,
-# and this file exists alongside it during the migration.
+# The image the k3s cluster on the Pi runs. The Makefile's build-pi target
+# still produces a bare binary for trying things on the Pi directly, but this
+# is the only thing deployed.
 
 FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 WORKDIR /src
@@ -27,8 +27,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH \
 # time/tzdata so the zone database travels inside the binary.
 FROM scratch
 
-# The app writes SQLite files here; the deployment mounts the host's existing
-# /var/lib/weight-tracker over it.
+# The app writes SQLite files here; the deployment mounts the app's
+# PersistentVolumeClaim over it.
 WORKDIR /var/lib/weight-tracker
 
 COPY --from=build /out/weight-tracker /weight-tracker

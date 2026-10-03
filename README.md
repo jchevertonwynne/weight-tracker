@@ -18,30 +18,27 @@ overnight delta versus the most recent evening entry.
 ## Run locally
 
 ```sh
-go run . -addr :8080 -db weight-tracker.db
+make run
 ```
 
-Then open http://localhost:8080.
+Then open http://localhost:8080. `make run` passes `-dev-user`, which stands in
+for the Cloudflare Access identity a local server never gets; without it, or an
+`-allowed-emails` list, the app refuses to start (see Deployment).
 
-## Build for Raspberry Pi
+## Build a bare binary for the Pi
 
-No cgo and no cross-compilation toolchain needed — `modernc.org/sqlite` is pure Go.
+This is not how the app is deployed (see below), but a bare binary is
+occasionally useful for trying something on the Pi directly. No cgo and no
+cross-compilation toolchain is needed — `modernc.org/sqlite` is pure Go:
 
 ```sh
-# 64-bit Raspberry Pi OS (Pi 4/5, most current images)
-GOOS=linux GOARCH=arm64 go build -o weight-tracker-arm64 .
-
-# 32-bit Raspberry Pi OS (older images / Pi Zero W, Pi 2)
-GOOS=linux GOARCH=arm GOARM=6 go build -o weight-tracker-armv6 .
+make build-pi                  # 64-bit Raspberry Pi OS (Pi 4/5)
+make build-pi PI_ARCH=armv6    # 32-bit Raspberry Pi OS (Pi Zero W, Pi 2)
 ```
 
-Copy the binary to the Pi (`scp weight-tracker-arm64 jcw@jcwpi:~/`) and run it.
-Port 8090 is used here since 8080 is already taken by Pi-hole's admin
-dashboard on this Pi — adjust if that's not the case for you:
-
-```sh
-./weight-tracker-arm64 -addr :8090 -db /var/lib/weight-tracker/weight-tracker.db
-```
+Pick a port other than 8080, which Pi-hole's admin dashboard holds there, and a
+database path other than the cluster's — two processes writing one SQLite file
+is the split-brain `make deploy` refuses to cause.
 
 ## Deployment
 
@@ -51,11 +48,10 @@ service. Push to `main`: CI builds an arm64 image, Flux notices the new tag,
 commits it to the homelab repo and rolls the pod. Nothing here touches the Pi
 directly.
 
-The database lives on a `hostPath` at `/var/lib/weight-tracker`, owned
-`jcw:grafana` mode `2770` — setgid so Grafana can read the SQLite file. The
-Deployment runs as `1000:126` to match. Newer apps use a PersistentVolumeClaim
-instead; this one keeps the hostPath because the data was already there when
-it moved into the cluster.
+The database lives on a `local-path` PersistentVolumeClaim, so on the node it
+is under `/var/lib/rancher/k3s/storage/pvc-*_apps_weight-tracker/`, owned
+`1000:1000`. It used to be a `hostPath` at `/var/lib/weight-tracker`; nothing
+reads that directory any more, which is worth knowing before restoring into it.
 
 `TZ=Europe/London` is set in the manifest and is not cosmetic. This app splits
 weigh-ins into morning and evening on local wall-clock time, and while the
@@ -77,14 +73,15 @@ identity required".
 
 Everything is behind that check except `/healthz`, `/metrics`, `/static/`,
 `/sw.js` and `/backup.db`, each named in `routes` in `main.go` with its reason.
+`/backup.db` is only half an exception: a caller with an Access identity is held
+to the allowlist like anywhere else, and one without needs the bearer token in
+`-backup-token-file`, which only the in-cluster backup job holds. Without that
+token, a request with no identity is refused there too.
 There is still no login, no accounts and no per-user data: everyone the
 allowlist admits sees and edits the same entries.
 
 Locally there is no Access at all, so `make run` passes `-dev-user`, which
 stands in for the header and is admitted whether or not it is on the list.
-
-`make build-pi` still cross-compiles a bare binary, which is occasionally
-useful for testing on the Pi directly, but it is not how this gets deployed.
 
 ## Backups
 
@@ -92,25 +89,31 @@ Settings → **Download backup** (or `GET /backup.db`) returns a consistent
 snapshot of the whole database, taken with SQLite's `VACUUM INTO` — no need
 to stop the app, and unlike copying the file off disk it captures writes
 still sitting in the write-ahead log. The result is a single self-contained
-file with no companion `-wal`/`-shm`, so restoring is just:
+file with no companion `-wal`/`-shm`.
+
+The cluster already takes one every hour: a CronJob in the homelab repo
+fetches it and commits it to the private `homelab-backups` repo, so
+`data/weight-tracker.db` there is at most an hour old and its git history goes
+back to any hour before that.
+
+To restore one, scale the app to zero (it is the only writer, and the database
+is WAL, so copying underneath a running pod gives you a file that is present but
+wrong), put the snapshot into the volume, and remove the old log files with it:
 
 ```sh
 kubectl -n apps scale deploy/weight-tracker --replicas=0
-sudo cp weight-tracker-backup-2026-08-16.db /var/lib/weight-tracker/weight-tracker.db
-sudo rm -f /var/lib/weight-tracker/weight-tracker.db-wal \
-           /var/lib/weight-tracker/weight-tracker.db-shm
+dir=$(sudo sh -c 'echo /var/lib/rancher/k3s/storage/pvc-*_apps_weight-tracker')
+sudo install -o 1000 -g 1000 -m 0644 weight-tracker-backup-2026-08-16.db "$dir/weight-tracker.db"
+sudo rm -f "$dir/weight-tracker.db-wal" "$dir/weight-tracker.db-shm"
 kubectl -n apps scale deploy/weight-tracker --replicas=1
 ```
 
+The `sudo sh -c` is there because `/var/lib/rancher/k3s/storage` is not
+readable by an ordinary user, so the glob has to expand as root. Check `$dir`
+names exactly one directory before going further.
+
 Prefer this over `export.csv` for backups: the CSV holds weigh-ins only,
 while the snapshot keeps goals, markers, period overrides and row ids too.
-
-To pull one from another machine on a schedule:
-
-```sh
-kubectl -n apps port-forward deploy/weight-tracker 8090:8090 &
-curl -f -o "weights-$(date +%F).db" http://localhost:8090/backup.db
-```
 
 The database runs in WAL mode, so a reader never blocks the writer and a
 crash mid-write replays the log rather than risking a torn database file.
@@ -118,19 +121,17 @@ crash mid-write replays the log rather than risking a torn database file.
 ## Upgrading
 
 Schema changes are applied automatically on startup, so upgrading is just
-replacing the binary. Migrations that rewrite a table (the kilogram-to-gram
+deploying the new image. Migrations that rewrite a table (the kilogram-to-gram
 conversion) run inside a transaction and are skipped once applied, so
 restarting is safe and repeatable.
 
-They still rewrite your only copy of the data, so take a backup of the
-database file first — the app is stopped at that point anyway:
-
-```sh
-kubectl -n apps scale deploy/weight-tracker --replicas=0
-sudo cp /var/lib/weight-tracker/weight-tracker.db \
-        /var/lib/weight-tracker/weight-tracker.db.bak
-```
+They still rewrite the live copy of the data. The hourly snapshot in
+`homelab-backups` is a backup already, but if a commit carries a migration,
+take a fresh one just before it lands: Settings → **Download backup**. That is
+the same `VACUUM INTO` snapshot, so it includes whatever is still in the WAL —
+which copying `weight-tracker.db` off the volume would not, even with the app
+stopped, since SQLite does not always checkpoint the log away on shutdown.
 
 If a migration fails, the app refuses to start rather than serving against a
 half-converted database; check `kubectl -n apps logs deploy/weight-tracker` and
-restore the backup.
+restore the backup as described under Backups.
