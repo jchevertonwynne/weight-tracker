@@ -1,0 +1,18 @@
+<section class="card">
+	<h2>Set goal weight</h2>
+	<form id="goal-form" class="entry-form"
+		hx-post="/goals"
+		hx-target="#goals-list"
+		hx-swap="outerHTML"
+		hx-on::after-request="if(event.detail.successful) this.reset()">
+		<label class="field">
+			<span>Goal weight (kg)</span>
+			<input type="number" step="0.1" min="0" name="weight_kg" required>
+		</label>
+		<label class="field">
+			<span>Effective date</span>
+			<input type="date" name="effective_from" value="{{ now_date }}" required>
+		</label>
+		<button type="submit" class="btn btn-primary">Set goal</button>
+	</form>
+</section>

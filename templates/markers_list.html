@@ -1,0 +1,19 @@
+<section class="card" id="markers-list">
+	<h2>Marker history</h2>
+	{% if markers.is_empty() %}
+		<p class="empty">No markers yet.</p>
+	{% else %}
+		<table class="entry-table">
+			<thead>
+				<tr>
+					<th scope="col">Date</th>
+					<th scope="col">Note</th>
+					<th scope="col"><span class="visually-hidden">Actions</span></th>
+				</tr>
+			</thead>
+			<tbody>
+				{% for marker in markers %}{% include "marker_row.html" %}{% endfor %}
+			</tbody>
+		</table>
+	{% endif %}
+</section>

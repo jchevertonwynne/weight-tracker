@@ -1,0 +1,22 @@
+<div class="entry-row" id="entry-{{ row.id }}">
+	<div class="entry-main">
+		<span class="chip chip-{{ row.period }}">{{ row.period.label() }}</span>
+		<span class="entry-date">{{ row.when }}</span>
+		<span class="entry-weight">{{ row.weight }} kg</span>
+		{% if let Some(change) = row.overnight %}
+			<span class="chip {% if change.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ change.delta() }} overnight</span>
+		{% endif %}
+		{% if let Some(change) = row.daily %}
+			<span class="chip {% if change.0 > 0 %}chip-gain{% else %}chip-loss{% endif %}">{{ change.delta() }} today</span>
+		{% endif %}
+	</div>
+	{#- A single edit affordance keeps the row compact; Delete lives inside the
+	    edit form (see row_edit.html), gating a rare, destructive action behind
+	    a deliberate step instead of a red button on every row. #}
+	<button class="btn-icon" hx-get="/entries/{{ row.id }}/edit" hx-target="#entry-{{ row.id }}" hx-swap="outerHTML" aria-label="Edit entry" title="Edit">
+		<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+			<path d="M12 20h9"></path>
+			<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+		</svg>
+	</button>
+</div>

@@ -1,0 +1,21 @@
+<div class="entry-row entry-row-editing" id="entry-{{ row.id }}">
+	<form class="edit-form" hx-put="/entries/{{ row.id }}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter">
+		{#- step="any", not "0.1": the value is the stored weight rendered back
+		    to kilograms, which for an imported or unit-converted entry can
+		    carry three decimals (81.647). A 0.1 step would make the browser
+		    reject saving an untouched row. #}
+		<input type="number" step="any" min="0" name="weight_kg" value="{{ row.weight.input() }}" required>
+		<input type="date" name="recorded_at_date" value="{{ row.recorded_at.ymd() }}" required>
+		<input type="time" name="recorded_at_time" value="{{ row.recorded_at.hm() }}" required>
+		<select name="period_override">
+			<option value="" {% if row.override_value().is_empty() %}selected{% endif %}>Auto</option>
+			<option value="morning" {% if row.override_value() == "morning" %}selected{% endif %}>Morning</option>
+			<option value="evening" {% if row.override_value() == "evening" %}selected{% endif %}>Evening</option>
+		</select>
+		<button type="submit" class="btn btn-primary btn-small">Save</button>
+		<button type="button" class="btn-text btn-small" hx-get="/entries/{{ row.id }}" hx-target="#entry-{{ row.id }}" hx-swap="outerHTML">Cancel</button>
+		{#- type="button" so it deletes rather than submitting the edit. Pushed
+		    to the far end (see .edit-delete) to keep it clear of Save. #}
+		<button type="button" class="btn btn-danger btn-small edit-delete" hx-delete="/entries/{{ row.id }}" hx-target="#entries-list" hx-swap="outerHTML" hx-include="#entries-filter" hx-confirm="Delete this entry?">Delete</button>
+	</form>
+</div>

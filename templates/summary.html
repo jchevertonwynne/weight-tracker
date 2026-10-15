@@ -1,48 +1,50 @@
-{{define "summary"}}
-{{if .Today.Message}}
-	<p class="today-status {{if .Today.Logged}}today-status-done{{else}}today-status-todo{{end}}">{{.Today.Message}}</p>
-{{end}}
-{{if .Empty}}
-	<p class="empty">{{.Empty}}</p>
-{{else}}
+<p class="today-status {% if summary.today.logged %}today-status-done{% else %}today-status-todo{% endif %}">
+	{%- if summary.today.logged %}Today's {{ summary.today.period }} weigh-in is logged.{% else %}No {{ summary.today.period }} weigh-in logged yet today.{% endif -%}
+</p>
+{% if let Some(week) = summary.week %}
 	<div class="summary-stats">
 		<div class="stat-tile">
 			<span class="stat-label">This week (morning avg)</span>
-			<span class="stat-value">{{.ThisWeekAvg}}</span>
+			<span class="stat-value">{{ "{:.1} kg"|format(week.average) }}</span>
 		</div>
-		{{if .HasComparison}}
+		{% if let Some(last) = week.last_week %}
 			<div class="stat-tile">
 				<span class="stat-label">Last week</span>
-				<span class="stat-value">{{.LastWeekAvg}}</span>
+				<span class="stat-value">{{ "{:.1} kg"|format(last) }}</span>
 			</div>
 			<div class="stat-tile">
 				<span class="stat-label">Change</span>
-				<span class="chip {{if .DeltaIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Delta}}</span>
+				<span class="chip {% if week.average - last < 0.0 %}chip-loss{% else %}chip-gain{% endif %}">{{ "{:+.1} kg"|format(week.average - last) }}</span>
 			</div>
-		{{else}}
+		{% else %}
 			<p class="empty">Not enough data from last week yet for a comparison.</p>
-		{{end}}
-		{{if .Goal.HasGoal}}
-			{{if .Goal.Reached}}
+		{% endif %}
+		{% if let Some(goal) = week.goal %}
+			{% match goal.outlook %}
+			{% when Outlook::Reached %}
 				<div class="stat-tile">
-					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
+					<span class="stat-label">Goal ({{ goal.weight }} kg)</span>
 					<span class="chip chip-loss">Reached</span>
 				</div>
-			{{else}}
+			{% when Outlook::Remaining { remaining, eta } %}
 				<div class="stat-tile">
-					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
-					<span class="stat-value">{{.Goal.RemainingStr}}</span>
+					<span class="stat-label">Goal ({{ goal.weight }} kg)</span>
+					<span class="stat-value">{{ "{:.1} kg to go"|format(remaining) }}</span>
 				</div>
-				{{if .Goal.ETALabel}}
+				{% match eta %}
+				{% when Eta::By(when) %}
 					<div class="stat-tile">
 						<span class="stat-label">Estimated</span>
-						<span class="stat-value">{{.Goal.ETALabel}}</span>
+						<span class="stat-value">{{ when.date_label() }}</span>
 					</div>
-				{{else}}
-					<p class="empty">{{.Goal.Stalled}}</p>
-				{{end}}
-			{{end}}
-		{{end}}
+				{% when Eta::NoRateYet %}
+					<p class="empty">Not enough data yet for a goal estimate.</p>
+				{% when Eta::NotTrending %}
+					<p class="empty">Not currently trending toward your goal.</p>
+				{% endmatch %}
+			{% endmatch %}
+		{% endif %}
 	</div>
-{{end}}
-{{end}}
+{% else %}
+	<p class="empty">Not enough morning weigh-ins this week yet for a trend comparison.</p>
+{% endif %}

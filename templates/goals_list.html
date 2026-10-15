@@ -1,0 +1,10 @@
+<section class="card" id="goals-list">
+	<h2>Goal history</h2>
+	{% if goals.is_empty() %}
+		<p class="empty">No goal set yet.</p>
+	{% else %}
+		<div class="entries">
+			{% for row in goals %}{% include "goal_row.html" %}{% endfor %}
+		</div>
+	{% endif %}
+</section>
