@@ -1,0 +1,18 @@
+<section class="card">
+	<h2>Markers</h2>
+	<form id="marker-form" class="entry-form"
+		hx-post="/markers"
+		hx-target="#markers-list"
+		hx-swap="outerHTML"
+		hx-on::after-request="if(event.detail.successful) this.reset()">
+		<label class="field">
+			<span>Date</span>
+			<input type="date" name="date" value="{{ now_date }}" required>
+		</label>
+		<label class="field">
+			<span>Note</span>
+			<input type="text" name="note" placeholder="e.g. started new diet" autocomplete="off" required>
+		</label>
+		<button type="submit" class="btn btn-primary">Add marker</button>
+	</form>
+</section>

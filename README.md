@@ -2,10 +2,13 @@
 
 A tiny self-hosted weight tracker for morning/evening weigh-ins, built to run on a Raspberry Pi.
 
-- Go + `net/http` (no web framework)
+- Rust and axum, on [homelab-rs](https://github.com/jchevertonwynne/homelab-rs)
+  for its logs, traces, metrics, heap profile and Access allowlist — which
+  keep the shape the Go version's had, so the dashboards read it unchanged
 - htmx for interactivity, no JS build step
 - Hand-rolled Material-inspired CSS
-- SQLite via `modernc.org/sqlite` (pure Go, no cgo — cross-compiles trivially)
+- SQLite, bundled through rusqlite; askama templates and the static assets
+  are compiled into the binary
 - Weights are stored as whole grams and displayed in kilograms; a REAL
   kilogram column could not represent a value like 82.4 exactly, which
   leaked into the CSV export as `82.400000000000006`
@@ -25,21 +28,6 @@ Then open http://localhost:8080. `make run` passes `-dev-user`, which stands in
 for the Cloudflare Access identity a local server never gets; without it, or an
 `-allowed-emails` list, the app refuses to start (see Deployment).
 
-## Build a bare binary for the Pi
-
-This is not how the app is deployed (see below), but a bare binary is
-occasionally useful for trying something on the Pi directly. No cgo and no
-cross-compilation toolchain is needed — `modernc.org/sqlite` is pure Go:
-
-```sh
-make build-pi                  # 64-bit Raspberry Pi OS (Pi 4/5)
-make build-pi PI_ARCH=armv6    # 32-bit Raspberry Pi OS (Pi Zero W, Pi 2)
-```
-
-Pick a port other than 8080, which Pi-hole's admin dashboard holds there, and a
-database path other than the cluster's — two processes writing one SQLite file
-is the split-brain `make deploy` refuses to cause.
-
 ## Deployment
 
 Runs on the k3s cluster described in
@@ -55,9 +43,12 @@ reads that directory any more, which is worth knowing before restoring into it.
 
 `TZ=Europe/London` is set in the manifest and is not cosmetic. This app splits
 weigh-ins into morning and evening on local wall-clock time, and while the
-binary embeds the zone database (`import _ "time/tzdata"`), Go still reads `TZ`
-to decide what `time.Local` is. Without it the pod runs in UTC and the split
-shifts by up to an hour, silently.
+binary carries the zone database (homelab-rs bundles it, so it resolves on a
+scratch image), `TZ` is what chooses the zone. Without it the pod runs in UTC
+and the split shifts by up to an hour, silently. Where a zone repeats an hour,
+as at 01:30 when the clocks go back, a weigh-in is read as the later of the
+two, as the Go version read it; `make check` runs the tests under four zones,
+as CI does.
 
 `weight.jchevertonwynne.uk` is served through a Cloudflare tunnel and sits
 behind Cloudflare Access with an email allowlist, enforced at Cloudflare's

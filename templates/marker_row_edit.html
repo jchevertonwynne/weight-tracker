@@ -1,0 +1,10 @@
+<tr class="entry-row-editing" id="marker-{{ marker.id }}">
+	<td colspan="3">
+		<form class="edit-form" hx-put="/markers/{{ marker.id }}" hx-target="#markers-list" hx-swap="outerHTML">
+			<input type="date" name="date" value="{{ marker.date_input }}" required>
+			<input type="text" name="note" value="{{ marker.note }}" autocomplete="off" required>
+			<button type="submit" class="btn btn-primary btn-small">Save</button>
+			<button type="button" class="btn-text btn-small" hx-get="/markers/{{ marker.id }}" hx-target="#marker-{{ marker.id }}" hx-swap="outerHTML">Cancel</button>
+		</form>
+	</td>
+</tr>

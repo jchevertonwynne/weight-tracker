@@ -1,48 +1,46 @@
-{{define "summary"}}
-{{if .Today.Message}}
-	<p class="today-status {{if .Today.Logged}}today-status-done{{else}}today-status-todo{{end}}">{{.Today.Message}}</p>
-{{end}}
-{{if .Empty}}
-	<p class="empty">{{.Empty}}</p>
-{{else}}
+{% if !summary.today.message.is_empty() %}
+	<p class="today-status {% if summary.today.logged %}today-status-done{% else %}today-status-todo{% endif %}">{{ summary.today.message }}</p>
+{% endif %}
+{% if !summary.empty.is_empty() %}
+	<p class="empty">{{ summary.empty }}</p>
+{% else %}
 	<div class="summary-stats">
 		<div class="stat-tile">
 			<span class="stat-label">This week (morning avg)</span>
-			<span class="stat-value">{{.ThisWeekAvg}}</span>
+			<span class="stat-value">{{ summary.this_week_avg }}</span>
 		</div>
-		{{if .HasComparison}}
+		{% if summary.has_comparison %}
 			<div class="stat-tile">
 				<span class="stat-label">Last week</span>
-				<span class="stat-value">{{.LastWeekAvg}}</span>
+				<span class="stat-value">{{ summary.last_week_avg }}</span>
 			</div>
 			<div class="stat-tile">
 				<span class="stat-label">Change</span>
-				<span class="chip {{if .DeltaIsLoss}}chip-loss{{else}}chip-gain{{end}}">{{.Delta}}</span>
+				<span class="chip {% if summary.delta_is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ summary.delta }}</span>
 			</div>
-		{{else}}
+		{% else %}
 			<p class="empty">Not enough data from last week yet for a comparison.</p>
-		{{end}}
-		{{if .Goal.HasGoal}}
-			{{if .Goal.Reached}}
+		{% endif %}
+		{% if summary.goal.has_goal %}
+			{% if summary.goal.reached %}
 				<div class="stat-tile">
-					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
+					<span class="stat-label">Goal ({{ summary.goal.weight_str }} kg)</span>
 					<span class="chip chip-loss">Reached</span>
 				</div>
-			{{else}}
+			{% else %}
 				<div class="stat-tile">
-					<span class="stat-label">Goal ({{.Goal.WeightStr}} kg)</span>
-					<span class="stat-value">{{.Goal.RemainingStr}}</span>
+					<span class="stat-label">Goal ({{ summary.goal.weight_str }} kg)</span>
+					<span class="stat-value">{{ summary.goal.remaining_str }}</span>
 				</div>
-				{{if .Goal.ETALabel}}
+				{% if !summary.goal.eta_label.is_empty() %}
 					<div class="stat-tile">
 						<span class="stat-label">Estimated</span>
-						<span class="stat-value">{{.Goal.ETALabel}}</span>
+						<span class="stat-value">{{ summary.goal.eta_label }}</span>
 					</div>
-				{{else}}
-					<p class="empty">{{.Goal.Stalled}}</p>
-				{{end}}
-			{{end}}
-		{{end}}
+				{% else %}
+					<p class="empty">{{ summary.goal.stalled }}</p>
+				{% endif %}
+			{% endif %}
+		{% endif %}
 	</div>
-{{end}}
-{{end}}
+{% endif %}

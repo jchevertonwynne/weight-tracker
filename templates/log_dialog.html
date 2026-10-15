@@ -1,0 +1,35 @@
+<dialog id="log-dialog" class="card modal">
+	<h2>Log a weigh-in</h2>
+	<form id="entry-form" class="entry-form"
+		hx-post="/entries"
+		hx-target="#entries-list"
+		hx-swap="outerHTML"
+		hx-include="#entries-filter"
+		hx-disabled-elt="find button[type='submit']"
+		hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('log-dialog').close(); }">
+		<label class="field">
+			<span>Weight (kg)</span>
+			<input type="number" step="0.1" min="0" name="weight_kg" required autofocus>
+		</label>
+		<label class="field">
+			<span>Date</span>
+			<input type="date" id="recorded-at-date" name="recorded_at_date" value="{{ now_date }}" required>
+		</label>
+		<label class="field">
+			<span>Time</span>
+			<input type="time" id="recorded-at-time" name="recorded_at_time" value="{{ now_time }}" required>
+		</label>
+		<label class="field">
+			<span>Period</span>
+			<select name="period_override">
+				<option value="" selected>Auto</option>
+				<option value="morning">Morning</option>
+				<option value="evening">Evening</option>
+			</select>
+		</label>
+		<div class="modal-actions">
+			<button type="button" class="btn-text" id="log-cancel">Cancel</button>
+			<button type="submit" class="btn btn-primary">Add entry</button>
+		</div>
+	</form>
+</dialog>

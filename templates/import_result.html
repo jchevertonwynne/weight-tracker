@@ -1,4 +1,4 @@
-{{define "import-result"}}<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 	<meta charset="utf-8">
@@ -13,18 +13,17 @@
 	<main class="container">
 		<section class="card">
 			<h2>Import result</h2>
-			<p>Imported {{.Inserted}} entries.</p>
-			{{if .Duplicates}}<p>Skipped {{.Duplicates}} already-imported duplicates.</p>{{end}}
-			{{if .Invalid}}
-				<p>{{.Invalid}} rows could not be parsed:</p>
+			<p>Imported {{ inserted }} entries.</p>
+			{% if duplicates > 0 %}<p>Skipped {{ duplicates }} already-imported duplicates.</p>{% endif %}
+			{% if invalid > 0 %}
+				<p>{{ invalid }} rows could not be parsed:</p>
 				<ul>
-					{{range .Errors}}<li>line {{.LineNumber}}: {{.Reason}}</li>{{end}}
+					{% for e in errors %}<li>line {{ e.line_number }}: {{ e.reason }}</li>{% endfor %}
 				</ul>
-				{{if .Truncated}}<p class="empty">...and {{.Truncated}} more.</p>{{end}}
-			{{end}}
+				{% if truncated > 0 %}<p class="empty">...and {{ truncated }} more.</p>{% endif %}
+			{% endif %}
 			<p><a class="btn-text" href="/">Back to Weight Tracker</a></p>
 		</section>
 	</main>
 </body>
 </html>
-{{end}}

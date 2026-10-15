@@ -1,0 +1,10 @@
+<section class="card" id="entries-list">
+	<h2>History</h2>
+	{% if rows.is_empty() %}
+		<p class="empty">No entries yet.</p>
+	{% else %}
+		<div class="entries">
+			{% for row in rows %}{% include "row.html" %}{% endfor %}
+		</div>
+	{% endif %}
+</section>

@@ -1,12 +1,12 @@
-{{define "index"}}<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<title>Weight Tracker</title>
 	<link rel="stylesheet" href="/static/style.css">
-	<!-- The asset already existed for the web app manifest and service worker;
-	     it was simply never declared as the favicon. -->
+	{#- The asset already existed for the web app manifest and service
+	    worker; it was simply never declared as the favicon. #}
 	<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
 	<link rel="manifest" href="/static/manifest.json">
 	<meta name="theme-color" content="#00695c">
@@ -25,27 +25,27 @@
 			<section class="card">
 				<h2>Weekly summary</h2>
 				<div hx-get="/summary" hx-trigger="entries-changed from:body, time-passed from:body" hx-swap="innerHTML">
-					{{template "summary" .Summary}}
+					{% include "summary.html" %}
 				</div>
 			</section>
-			{{template "trend-card" .}}
-			{{template "markers-form-card" .}}
-			{{template "markers-list" .}}
-			{{template "goal-form-card" .}}
-			{{template "goals-list" .}}
+			{% include "trend_card.html" %}
+			{% include "markers_form_card.html" %}
+			{% include "markers_list.html" %}
+			{% include "goal_form_card.html" %}
+			{% include "goals_list.html" %}
 		</div>
 
 		<div class="tab-panel" id="tab-history" hidden>
-			{{template "entries-filter" .}}
-			{{template "entries-list" .}}
+			{% include "entries_filter.html" %}
+			{% include "entries_list.html" %}
 		</div>
 
-		{{template "overnight-tab" .}}
+		{% include "overnight_tab.html" %}
 
-		{{template "settings-tab" .}}
+		{% include "settings_tab.html" %}
 	</main>
 
-	{{template "log-dialog" .}}
+	{% include "log_dialog.html" %}
 
 	<button type="button" class="fab" id="log-fab" aria-label="Log a weigh-in">+</button>
 
@@ -69,4 +69,3 @@
 	<script src="/static/app.js"></script>
 </body>
 </html>
-{{end}}

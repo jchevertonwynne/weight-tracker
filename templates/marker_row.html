@@ -1,0 +1,8 @@
+<tr id="marker-{{ marker.id }}">
+	<td class="entry-date">{{ marker.date_label }}</td>
+	<td class="entry-note">{{ marker.note }}</td>
+	<td class="entry-actions">
+		<button class="btn-text" hx-get="/markers/{{ marker.id }}/edit" hx-target="#marker-{{ marker.id }}" hx-swap="outerHTML">Edit</button>
+		<button class="btn-text btn-danger" hx-delete="/markers/{{ marker.id }}" hx-target="#markers-list" hx-swap="outerHTML" hx-confirm="Delete this marker?">Delete</button>
+	</td>
+</tr>
