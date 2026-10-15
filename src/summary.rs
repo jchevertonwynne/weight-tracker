@@ -1,334 +1,267 @@
-//! The trailing 7-day average morning weight against the 7 days before it,
-//! a goal projection from that rate, and whether today has been logged.
+//! The weekly summary on the Log tab: this week's average morning weight
+//! against last week's, where that rate leads relative to the goal, and
+//! whether today's weigh-in is in.
 
-use jiff::Zoned;
+use jiff::{Span, Zoned};
 
-use crate::db::{self, Entry, Goal};
-use crate::{clock, goals, weight};
+use crate::model::{Entry, Goal, Grams, Period, current_goal};
 
-/// Morning entries only: the fasted reading is less noisy than an evening
-/// one, and is what the rest of the app treats as the reference point.
-#[derive(Clone, Debug, Default)]
-pub struct WeeklySummary {
-    /// Set, with the week fields blank, when there is no data this week.
-    pub empty: String,
-    pub today: TodayStatus,
-    pub this_week_avg: String,
-    /// False when last week has no qualifying entries.
-    pub has_comparison: bool,
-    pub last_week_avg: String,
-    pub delta: String,
-    pub delta_is_loss: bool,
-    pub goal: GoalProgress,
+/// Mornings only: the fasted reading is the steadier one.
+#[derive(Clone, Debug)]
+pub struct Summary {
+    pub today: Today,
+    /// None when there is no morning this week to average.
+    pub week: Option<Week>,
 }
 
-/// The Log tab's at-a-glance answer to "have I tracked today?": whether the
-/// weigh-in for the current time of day (see [`db::detect_period`]) is in.
-/// Independent of the week comparison, so it shows on a brand-new tracker.
-#[derive(Clone, Debug, Default)]
-pub struct TodayStatus {
+/// Whether the weigh-in for the current time of day is logged — shown even
+/// on a tracker too new for a weekly comparison.
+#[derive(Clone, Debug)]
+pub struct Today {
+    pub period: Period,
     pub logged: bool,
-    pub message: String,
 }
 
-/// This week's average projected onward to the active goal, at the same
-/// week-over-week rate the delta is built from. Default (no goal) when there
-/// is no active goal or no data this week to project from.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
+pub struct Week {
+    /// This week's average, in kg.
+    pub average: f64,
+    /// Last week's, when there was a morning to average.
+    pub last_week: Option<f64>,
+    pub goal: Option<GoalProgress>,
+}
+
+#[derive(Clone, Debug)]
 pub struct GoalProgress {
-    pub has_goal: bool,
-    /// The goal weight, kg.
-    pub weight_str: String,
-    pub reached: bool,
-    /// "2.2 kg to go"
-    pub remaining_str: String,
-    /// "Sep 30, 2026"; empty if not computable.
-    pub eta_label: String,
-    /// Shown in place of the ETA when there is none.
-    pub stalled: String,
+    pub weight: Grams,
+    pub outlook: Outlook,
 }
 
-/// How close this week's average has to be to call the goal reached, rather
-/// than reporting a razor-thin "0.0 kg to go".
-const REACHED_EPSILON_KG: f64 = 0.05;
-
-/// The smallest weekly rate treated as a trend. Below it the ETA would be
-/// years out — precision the data does not support — so it is "stalled".
-const MIN_RATE_KG_PER_WEEK: f64 = 0.01;
-
-fn today_status(entries: &[Entry], now: &Zoned) -> TodayStatus {
-    let period = db::detect_period(now);
-    let logged = entries
-        .iter()
-        .any(|e| weight::entry_period(e) == period && same_day(&e.recorded_at, now));
-    TodayStatus {
-        logged,
-        message: if logged {
-            format!("Today's {period} weigh-in is logged.")
-        } else {
-            format!("No {period} weigh-in logged yet today.")
-        },
-    }
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outlook {
+    Reached,
+    /// `remaining` kg off, and when this week's rate would get there.
+    Remaining {
+        remaining: f64,
+        eta: Eta,
+    },
 }
 
-/// Whether `a` and `b` share a calendar day, `a` read in `b`'s zone.
-fn same_day(a: &Zoned, b: &Zoned) -> bool {
-    a.with_time_zone(b.time_zone().clone()).date() == b.date()
+#[derive(Clone, Debug, PartialEq)]
+pub enum Eta {
+    By(Zoned),
+    /// No week before this one to take a rate from.
+    NoRateYet,
+    /// The rate is flat, or heading away from the goal.
+    NotTrending,
 }
 
-pub fn build(entries: &[Entry], all_goals: &[Goal], now: &Zoned) -> WeeklySummary {
-    let today = today_status(entries, now);
-    let this_start = clock::add_date(now, 0, 0, -7).timestamp();
-    let last_start = clock::add_date(now, 0, 0, -14).timestamp();
-    let now_ts = now.timestamp();
+/// Within this of the goal counts as there, rather than "0.0 kg to go".
+const REACHED_KG: f64 = 0.05;
 
-    let mut this_week = Vec::new();
-    let mut last_week = Vec::new();
-    for e in entries {
-        if weight::entry_period(e) != "morning" {
-            continue;
+/// The slowest weekly progress taken as a trend. Below it an ETA would be
+/// years away — more precision than the data has.
+const MIN_KG_PER_WEEK: f64 = 0.01;
+
+pub fn summary(entries: &[Entry], goals: &[Goal], now: &Zoned) -> Summary {
+    let period = Period::at(now);
+    let today = Today {
+        period,
+        logged: entries.iter().any(|e| {
+            e.period() == period
+                && e.recorded_at.with_time_zone(now.time_zone().clone()).date() == now.date()
+        }),
+    };
+
+    let week_ago = now.checked_sub(Span::new().days(7)).ok();
+    let fortnight_ago = now.checked_sub(Span::new().days(14)).ok();
+    let mornings = || entries.iter().filter(|e| e.period() == Period::Morning);
+    let this_week: Vec<Grams> = mornings()
+        .filter(|e| week_ago.as_ref().is_some_and(|w| e.recorded_at >= *w) && e.recorded_at <= *now)
+        .map(|e| e.weight)
+        .collect();
+    let last_week: Vec<Grams> = mornings()
+        .filter(|e| {
+            fortnight_ago.as_ref().is_some_and(|f| e.recorded_at >= *f)
+                && week_ago.as_ref().is_some_and(|w| e.recorded_at < *w)
+        })
+        .map(|e| e.weight)
+        .collect();
+
+    let week = average_kg(&this_week).map(|average| {
+        let last_week = average_kg(&last_week);
+        Week {
+            average,
+            last_week,
+            goal: current_goal(goals, now).map(|g| progress(g.weight, average, last_week, now)),
         }
-        let t = e.recorded_at.timestamp();
-        if t >= this_start && t <= now_ts {
-            this_week.push(e.weight_g);
-        } else if t >= last_start && t < this_start {
-            last_week.push(e.weight_g);
-        }
-    }
+    });
+    Summary { today, week }
+}
 
-    if this_week.is_empty() {
-        return WeeklySummary {
-            empty: "Not enough morning weigh-ins this week yet for a trend comparison.".into(),
-            today,
-            ..Default::default()
+/// Where this week's average is heading, relative to `goal`, at the rate it
+/// moved since last week.
+fn progress(goal: Grams, average: f64, last_week: Option<f64>, now: &Zoned) -> GoalProgress {
+    let remaining = average - goal.kg();
+    let outlook = if remaining.abs() <= REACHED_KG {
+        Outlook::Reached
+    } else {
+        let eta = match last_week {
+            None => Eta::NoRateYet,
+            Some(last) => {
+                // Above the goal it has to fall, below it rise: either way
+                // this is positive only when moving towards it.
+                let towards = (last - average) * remaining.signum();
+                if towards <= MIN_KG_PER_WEEK {
+                    Eta::NotTrending
+                } else {
+                    let days = (remaining.abs() / towards * 7.0).round() as i64;
+                    Span::new()
+                        .try_days(days)
+                        .ok()
+                        .and_then(|span| now.checked_add(span).ok())
+                        .map_or(Eta::NotTrending, Eta::By)
+                }
+            }
         };
-    }
-    let this_avg = mean_kg(&this_week);
-    let mut result = WeeklySummary {
-        this_week_avg: format!("{this_avg:.1} kg"),
-        today,
-        ..Default::default()
+        Outlook::Remaining {
+            remaining: remaining.abs(),
+            eta,
+        }
     };
-
-    let last_avg = (!last_week.is_empty()).then(|| mean_kg(&last_week));
-    if let Some(last_avg) = last_avg {
-        result.has_comparison = true;
-        result.last_week_avg = format!("{last_avg:.1} kg");
-        result.delta = format!("{:+.1} kg", this_avg - last_avg);
-        result.delta_is_loss = this_avg < last_avg;
+    GoalProgress {
+        weight: goal,
+        outlook,
     }
-    if let Some(goal) = goals::current(all_goals, now) {
-        result.goal = goal_progress(this_avg, goal, last_avg, now);
-    }
-    result
 }
 
-fn goal_progress(this_avg: f64, goal: &Goal, last_avg: Option<f64>, now: &Zoned) -> GoalProgress {
-    let goal_kg = db::grams_to_kg(goal.weight_g);
-    let mut progress = GoalProgress {
-        has_goal: true,
-        weight_str: weight::format_kg(goal.weight_g),
-        ..Default::default()
-    };
-    let remaining = this_avg - goal_kg;
-    if remaining.abs() <= REACHED_EPSILON_KG {
-        progress.reached = true;
-        return progress;
-    }
-    progress.remaining_str = format!("{:.1} kg to go", remaining.abs());
-
-    let Some(last_avg) = last_avg else {
-        progress.stalled = "Not enough data yet for a goal estimate.".into();
-        return progress;
-    };
-    // Above the goal needs a falling rate, below it a rising one: either way
-    // progress_per_week is positive exactly when moving toward it.
-    let rate = this_avg - last_avg;
-    let progress_per_week = if remaining < 0.0 { rate } else { -rate };
-    if progress_per_week <= MIN_RATE_KG_PER_WEEK {
-        progress.stalled = "Not currently trending toward your goal.".into();
-        return progress;
-    }
-    let weeks = remaining.abs() / progress_per_week;
-    let days = (weeks * 7.0).round() as i64;
-    progress.eta_label = clock::try_add_date(now, 0, 0, days)
-        .map(|t| clock::date_label(&t))
-        .unwrap_or_default();
-    progress
-}
-
-/// The mean of gram values, in kilograms. Summed in integer grams, so it is
-/// exact however many weigh-ins it covers; only the division is floating.
-fn mean_kg(grams: &[i64]) -> f64 {
-    db::grams_to_kg(grams.iter().sum()) / grams.len() as f64
+/// The mean in kg, summed in whole grams so it is exact however many
+/// readings there are.
+fn average_kg(weights: &[Grams]) -> Option<f64> {
+    (!weights.is_empty())
+        .then(|| weights.iter().copied().sum::<Grams>().kg() / weights.len() as f64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testsupport::{at, entry, goal, nearly_equal};
+    use crate::testsupport::{at, entry, entry_as, goal, nearly_equal};
 
-    #[test]
-    fn build_cases() {
-        let now = at("2026-08-16 12:00");
-
-        let got = build(
-            &[
-                entry(1, at("2026-08-15 07:00"), 82.0, ""),
-                entry(2, at("2026-08-13 07:00"), 82.4, ""),
-                entry(3, at("2026-08-08 07:00"), 83.0, ""),
-                entry(4, at("2026-08-06 07:00"), 83.4, ""),
-            ],
-            &[],
-            &now,
-        );
-        assert_eq!(got.empty, "");
-        assert!(got.has_comparison);
-        assert_eq!(got.this_week_avg, "82.2 kg");
-        assert_eq!(got.last_week_avg, "83.2 kg");
-        assert_eq!(got.delta, "-1.0 kg");
-        assert!(got.delta_is_loss);
-
-        // Evenings do not skew it.
-        let got = build(
-            &[
-                entry(1, at("2026-08-15 07:00"), 82.0, ""),
-                entry(2, at("2026-08-15 21:00"), 90.0, ""),
-            ],
-            &[],
-            &now,
-        );
-        assert_eq!(got.this_week_avg, "82.0 kg");
-
-        // An override counts.
-        let got = build(
-            &[entry(1, at("2026-08-15 21:00"), 82.0, "morning")],
-            &[],
-            &now,
-        );
-        assert_eq!(got.this_week_avg, "82.0 kg");
-
-        let got = build(
-            &[
-                entry(1, at("2026-08-15 07:00"), 83.0, ""),
-                entry(2, at("2026-08-08 07:00"), 82.0, ""),
-            ],
-            &[],
-            &now,
-        );
-        assert_eq!(got.delta, "+1.0 kg");
-        assert!(!got.delta_is_loss);
-
-        let got = build(&[entry(1, at("2026-08-15 07:00"), 82.0, "")], &[], &now);
-        assert!(!got.this_week_avg.is_empty() && !got.has_comparison && got.delta.is_empty());
-
-        let got = build(
-            &[
-                entry(1, at("2026-08-15 07:00"), 82.0, ""),
-                entry(2, at("2026-06-01 07:00"), 95.0, ""),
-            ],
-            &[],
-            &now,
-        );
-        assert!(!got.has_comparison, "the old entry is outside both windows");
-
-        let got = build(&[], &[], &now);
-        assert!(!got.empty.is_empty() && got.this_week_avg.is_empty() && !got.has_comparison);
-
-        let got = build(&[entry(1, at("2026-08-08 07:00"), 83.0, "")], &[], &now);
-        assert!(!got.empty.is_empty(), "only last week has data");
+    fn week(entries: &[Entry], goals: &[Goal]) -> Option<Week> {
+        summary(entries, goals, &at("2026-08-16 12:00")).week
     }
 
     #[test]
-    fn today_status_cases() {
-        let got = build(
-            &[entry(1, at("2026-08-15 21:00"), 82.0, "")],
+    fn compares_this_weeks_mornings_with_last_weeks() {
+        let w = week(
+            &[
+                entry(1, "2026-08-15 07:00", 82.0),
+                entry(2, "2026-08-13 07:00", 82.4),
+                entry(3, "2026-08-08 07:00", 83.0),
+                entry(4, "2026-08-06 07:00", 83.4),
+                entry(5, "2026-08-15 21:00", 90.0), // an evening, ignored
+                entry(6, "2026-06-01 07:00", 95.0), // older than either week
+            ],
             &[],
-            &at("2026-08-16 08:00"),
         )
-        .today;
-        assert!(!got.logged);
-        assert_eq!(got.message, "No morning weigh-in logged yet today.");
-
-        let got = build(
-            &[entry(1, at("2026-08-16 07:15"), 82.0, "")],
-            &[],
-            &at("2026-08-16 09:30"),
-        )
-        .today;
-        assert!(got.logged);
-        assert_eq!(got.message, "Today's morning weigh-in is logged.");
-
-        let got = build(
-            &[entry(1, at("2026-08-16 07:15"), 82.0, "")],
-            &[],
-            &at("2026-08-16 20:00"),
-        )
-        .today;
-        assert!(!got.logged);
-        assert_eq!(got.message, "No evening weigh-in logged yet today.");
-
-        let got = build(
-            &[entry(1, at("2026-08-15 07:15"), 82.0, "")],
-            &[],
-            &at("2026-08-16 08:00"),
-        )
-        .today;
-        assert!(!got.logged, "that entry was yesterday");
-
-        let got = build(&[], &[], &at("2026-08-16 08:00"));
-        assert!(!got.empty.is_empty() && !got.today.message.is_empty());
+        .unwrap();
+        assert!(nearly_equal(w.average, 82.2));
+        assert!(nearly_equal(w.last_week.unwrap(), 83.2));
+        assert!(nearly_equal(w.average - w.last_week.unwrap(), -1.0));
     }
 
     #[test]
-    fn goal_progress_cases() {
-        let now = at("2026-08-16 12:00");
-        let this_week = vec![
-            entry(1, at("2026-08-15 07:00"), 82.0, ""),
-            entry(2, at("2026-08-13 07:00"), 82.0, ""),
-        ];
+    fn an_override_counts_as_its_period() {
+        let w = week(
+            &[entry_as(1, "2026-08-15 21:00", 82.0, Period::Morning)],
+            &[],
+        )
+        .unwrap();
+        assert!(nearly_equal(w.average, 82.0) && w.last_week.is_none());
+    }
 
-        assert!(!build(&this_week, &[], &now).goal.has_goal);
+    #[test]
+    fn nothing_this_week_is_no_week() {
+        assert!(week(&[], &[]).is_none());
         assert!(
-            !build(&this_week, &[goal(1, 78.0, "2026-12-01")], &now)
-                .goal
-                .has_goal
+            week(&[entry(1, "2026-08-08 07:00", 83.0)], &[]).is_none(),
+            "only last week"
         );
-
-        let got = build(&this_week, &[goal(1, 82.02, "2026-01-01")], &now).goal;
-        assert!(got.has_goal && got.reached && got.eta_label.is_empty());
-
-        let got = build(&this_week, &[goal(1, 78.0, "2026-01-01")], &now).goal;
-        assert!(!got.reached);
-        assert_eq!(got.remaining_str, "4.0 kg to go");
-        assert_eq!(got.stalled, "Not enough data yet for a goal estimate.");
-        assert_eq!(got.eta_label, "");
-
-        // 83.0 last week, so -1.0 kg/week, and 78.0 is 4 weeks out.
-        let mut entries = this_week.clone();
-        entries.push(entry(3, at("2026-08-08 07:00"), 83.0, ""));
-        entries.push(entry(4, at("2026-08-06 07:00"), 83.0, ""));
-        let got = build(&entries, &[goal(1, 78.0, "2026-01-01")], &now).goal;
-        assert!(!got.reached);
-        assert_eq!(
-            got.eta_label,
-            clock::date_label(&clock::add_date(&now, 0, 0, 28))
-        );
-        assert_eq!(got.stalled, "");
-
-        // Moving away: stalled rather than a nonsense ETA.
-        let mut entries = this_week;
-        entries.push(entry(3, at("2026-08-08 07:00"), 81.0, ""));
-        entries.push(entry(4, at("2026-08-06 07:00"), 81.0, ""));
-        let got = build(&entries, &[goal(1, 78.0, "2026-01-01")], &now).goal;
-        assert_eq!(got.eta_label, "");
-        assert_eq!(got.stalled, "Not currently trending toward your goal.");
     }
 
     #[test]
-    fn mean_kg_cases() {
-        assert!(nearly_equal(mean_kg(&[80000, 82000, 84000]), 82.0));
-        assert!(nearly_equal(mean_kg(&[81500]), 81.5));
-        assert!(nearly_equal(mean_kg(&[80001, 80001, 80001]), 80.001));
+    fn today() {
+        let today = |entries: &[Entry], now| summary(entries, &[], &at(now)).today;
+        let t = today(&[entry(1, "2026-08-15 21:00", 82.0)], "2026-08-16 08:00");
+        assert_eq!((t.period, t.logged), (Period::Morning, false));
+        assert!(today(&[entry(1, "2026-08-16 07:15", 82.0)], "2026-08-16 09:30").logged);
+        // This morning's reading does not answer for this evening.
+        let t = today(&[entry(1, "2026-08-16 07:15", 82.0)], "2026-08-16 20:00");
+        assert_eq!((t.period, t.logged), (Period::Evening, false));
+        assert!(!today(&[entry(1, "2026-08-15 07:15", 82.0)], "2026-08-16 08:00").logged);
+    }
+
+    #[test]
+    fn goal_progress() {
+        let this_week = vec![
+            entry(1, "2026-08-15 07:00", 82.0),
+            entry(2, "2026-08-13 07:00", 82.0),
+        ];
+        let outlook = |extra: &[Entry], g: Goal| {
+            let mut entries = this_week.clone();
+            entries.extend_from_slice(extra);
+            week(&entries, &[g]).unwrap().goal.map(|p| p.outlook)
+        };
+
+        assert!(week(&this_week, &[]).unwrap().goal.is_none());
+        assert!(
+            outlook(&[], goal(1, 78.0, "2026-12-01")).is_none(),
+            "not in effect yet"
+        );
+        assert_eq!(
+            outlook(&[], goal(1, 82.02, "2026-01-01")),
+            Some(Outlook::Reached)
+        );
+        assert_eq!(
+            outlook(&[], goal(1, 78.0, "2026-01-01")),
+            Some(Outlook::Remaining {
+                remaining: 4.0,
+                eta: Eta::NoRateYet
+            })
+        );
+
+        // Last week 83.0, so a kilo a week, and 78.0 is four weeks off.
+        let falling = [
+            entry(3, "2026-08-08 07:00", 83.0),
+            entry(4, "2026-08-06 07:00", 83.0),
+        ];
+        let Some(Outlook::Remaining {
+            eta: Eta::By(when), ..
+        }) = outlook(&falling, goal(1, 78.0, "2026-01-01"))
+        else {
+            panic!("no ETA");
+        };
+        assert_eq!(when.date().to_string(), "2026-09-13");
+
+        let rising = [
+            entry(3, "2026-08-08 07:00", 81.0),
+            entry(4, "2026-08-06 07:00", 81.0),
+        ];
+        assert_eq!(
+            outlook(&rising, goal(1, 78.0, "2026-01-01")),
+            Some(Outlook::Remaining {
+                remaining: 4.0,
+                eta: Eta::NotTrending
+            })
+        );
+    }
+
+    #[test]
+    fn averages_are_exact_in_grams() {
+        assert!(nearly_equal(
+            average_kg(&[Grams(80001); 3]).unwrap(),
+            80.001
+        ));
+        assert!(average_kg(&[]).is_none());
     }
 }

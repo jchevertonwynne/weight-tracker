@@ -9,13 +9,14 @@ mod goals;
 mod history;
 mod importer;
 mod markers;
+mod model;
 mod overnight;
 mod summary;
 #[cfg(test)]
 mod testsupport;
+mod timeline;
 mod timerange;
 mod web;
-mod weight;
 
 use std::sync::Arc;
 

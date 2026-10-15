@@ -1,39 +1,45 @@
-//! Fixtures shared by the domain tests, as internal/testsupport was.
+//! Fixtures for the tests.
 
 use jiff::Zoned;
 
-use crate::db::{self, Entry, Goal, Marker};
+use crate::clock;
+use crate::model::{Entry, Goal, Grams, Marker, Period};
 
-/// A local wall-clock time, "2006-01-02 15:04".
+/// A local wall-clock time, "2026-08-16 07:30".
 pub fn at(s: &str) -> Zoned {
-    crate::clock::tests::at(s)
+    clock::parse(s, "%Y-%m-%d %H:%M", &clock::tz()).unwrap_or_else(|| panic!("a test time: {s:?}"))
 }
 
-pub fn entry(id: i64, recorded_at: Zoned, weight_kg: f64, period_override: &str) -> Entry {
+pub fn entry(id: i64, recorded_at: &str, kg: f64) -> Entry {
     Entry {
         id,
-        recorded_at,
-        weight_g: db::kg_to_grams(weight_kg),
-        period_override: period_override.to_string(),
+        recorded_at: at(recorded_at),
+        weight: Grams::from_kg(kg),
+        period_override: None,
     }
 }
 
-/// A goal effective from midnight on `effective_from` ("2006-01-02").
-pub fn goal(id: i64, weight_kg: f64, effective_from: &str) -> Goal {
-    let from = at(&format!("{effective_from} 00:00"));
+pub fn entry_as(id: i64, recorded_at: &str, kg: f64, period: Period) -> Entry {
+    Entry {
+        period_override: Some(period),
+        ..entry(id, recorded_at, kg)
+    }
+}
+
+/// A goal from midnight on `from` ("2026-08-01").
+pub fn goal(id: i64, kg: f64, from: &str) -> Goal {
     Goal {
         id,
-        weight_g: db::kg_to_grams(weight_kg),
-        effective_from: from,
+        weight: Grams::from_kg(kg),
+        effective_from: at(&format!("{from} 00:00")),
     }
 }
 
-/// A marker on midnight of `date` ("2006-01-02").
+/// A marker on midnight of `date`.
 pub fn marker(id: i64, date: &str, note: &str) -> Marker {
-    let date = at(&format!("{date} 00:00"));
     Marker {
         id,
-        date,
+        date: at(&format!("{date} 00:00")),
         note: note.to_string(),
     }
 }

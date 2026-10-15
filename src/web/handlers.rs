@@ -1,735 +1,390 @@
-//! Every handler. A database failure answers 500 with its message, as the Go
-//! version did: this is one person's app, and the message is what they need
-//! to see.
+//! Every route's handler.
 
-use axum::extract::{Multipart, Path, RawQuery, State};
+use axum::extract::{Multipart, RawQuery, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use serde::Serialize;
 
 use super::Server;
-use super::form::Form;
-use super::pages::{self, render};
-use crate::db::{self, NewEntry};
-use crate::{
-    chart, clock, goals, history, importer, markers, overnight, summary, timerange, weight,
-};
+use super::error::{Error, Id, Result, bad_request, found};
+use super::form::Fields;
+use super::pages::{self, html};
+use crate::clock::Show as _;
+use crate::importer::{self, Unit};
+use crate::model::Period;
+use crate::timeline::Timeline;
+use crate::timerange::{Picker, Range};
+use crate::{chart, goals, history, overnight, summary};
 
 type S = State<Server>;
 
-fn error(status: StatusCode, msg: impl AsRef<str>) -> Response {
-    homelab::http::error(status, msg.as_ref())
-}
-
-fn internal(err: anyhow::Error) -> Response {
-    error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}"))
-}
-
-/// A failed delete: a row that is not there is the client's problem (404),
-/// anything else is ours (500). Without this, deleting an already-deleted id
-/// reported success.
-fn delete_error(err: anyhow::Error) -> Response {
-    if db::is_not_found(&err) {
-        error(StatusCode::NOT_FOUND, format!("{err:#}"))
-    } else {
-        internal(err)
-    }
-}
-
-fn parse_id(id: &str) -> Result<i64, Response> {
-    id.parse()
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid id"))
-}
-
-/// An upper sanity bound on any weight stored, well clear of the heaviest
-/// recorded human but low enough to catch a mistyped or unit-confused value.
-const MAX_WEIGHT_KG: f64 = 1000.0;
-
-/// The weight_kg field shared by the entry and goal forms, as the whole
-/// grams the database stores. The inputs carry min and step attributes, but
-/// those are client-side only: anything posting directly could otherwise
-/// store a negative, zero or non-finite weight, which then flows into the
-/// chart, the deltas and the export.
-fn parse_weight_g(form: &Form) -> Result<i64, Response> {
-    let bad = |msg: String| error(StatusCode::BAD_REQUEST, msg);
-    let kg: f64 = form
-        .get("weight_kg")
-        .parse()
-        .map_err(|e| bad(format!("weight_kg is not a number: {e}")))?;
-    // "NaN" and "inf" parse, and survive neither a trend line nor a
-    // conversion to grams.
-    if !kg.is_finite() {
-        return Err(bad("weight_kg must be a finite number".into()));
-    }
-    if kg <= 0.0 || kg > MAX_WEIGHT_KG {
-        return Err(bad(format!(
-            "weight_kg must be between 0 and {MAX_WEIGHT_KG}, got {kg}"
-        )));
-    }
-    let grams = db::kg_to_grams(kg);
-    if grams <= 0 {
-        return Err(bad(format!("weight_kg {kg} rounds to zero grams")));
-    }
-    Ok(grams)
-}
-
-/// A date input ("2006-01-02") and a time input ("15:04") joined, as local
-/// wall-clock time. Separate inputs rather than datetime-local avoid a clunky
-/// two-screen native picker on some mobile browsers.
-fn parse_date_time(form: &Form, prefix: &str) -> Option<jiff::Zoned> {
-    let combined = format!(
-        "{}T{}",
-        form.get(&format!("{prefix}_date")),
-        form.get(&format!("{prefix}_time"))
-    );
-    clock::parse_in(&combined, "%Y-%m-%dT%H:%M", &clock::tz())
-}
-
-/// A lone date input, for fields with no meaningful time of day.
-fn parse_date(form: &Form, field: &str) -> Option<jiff::Zoned> {
-    clock::parse_in(form.get(field), "%Y-%m-%d", &clock::tz())
-}
-
-pub async fn index(State(s): S, RawQuery(query): RawQuery) -> Response {
-    let (entries, goal_list, marker_list) =
-        match tokio::try_join!(s.db.list_entries(), s.db.list_goals(), s.db.list_markers()) {
-            Ok(lists) => lists,
-            Err(err) => return internal(err),
-        };
-    let now = (s.now)();
-    // Each picker's range comes off the URL, so a reload — or a shared link —
-    // lands on the same view. The naming ("overnight", "overnight_from",
-    // "overnight_until") is the half of the contract the server owns;
-    // static/app.js writes the same shape back.
-    let q = Form::from_query(query.as_deref());
-    let picker = |param: &'static str, def: &'static str| {
-        timerange::picker(
-            param,
-            def,
-            q.get(param),
-            q.get(&format!("{param}_from")),
-            q.get(&format!("{param}_until")),
-        )
+pub async fn index(State(s): S, RawQuery(query): RawQuery) -> Result {
+    let (entries, goal_list, markers) =
+        tokio::try_join!(s.db.entries(), s.db.goals(), s.db.markers())?;
+    let now = s.now();
+    let timeline = Timeline::new(&entries);
+    // Each picker's range is in the URL as `<param>`, `<param>_from` and
+    // `<param>_until` — what static/app.js writes when a range is applied —
+    // so a reload or a shared link shows the same view.
+    let q = Fields::from_query(query.as_deref());
+    let picker = |param: &'static str, default: &'static str| {
+        let at = |suffix: &str| q.get(&format!("{param}{suffix}")).to_string();
+        Picker::from_query(param, default, &at(""), &at("_from"), &at("_until"))
     };
-    let chart_range = picker("chart", "30");
-    let history_range = picker("history", "all");
-    let overnight_range = picker("overnight", "30");
+    let (chart_range, history_range, overnight_range) = (
+        picker("chart", "30"),
+        picker("history", "all"),
+        picker("overnight", "30"),
+    );
 
-    // Filtering through the pickers' own windows is what keeps the render
-    // agreeing with what each picker claims to show. The chart needs none:
-    // it is drawn client-side from /chart with these same inputs.
-    let pairs = overnight::windowed_pairs(&entries, &overnight_range.window(&now));
-    // The period select has no URL parameter, so it is at its "All" default.
-    let rows = history::filter_rows(
-        history::build_rows(&entries, &now),
-        "",
+    // Through each picker's own window, so the content is what the button
+    // says. The chart is drawn by the browser from /chart, with the same
+    // range.
+    let nights = overnight::nights(&timeline, &overnight_range.window(&now));
+    let rows = history::filter(
+        history::rows(&timeline, &now),
+        None,
         &history_range.window(&now),
     );
-    render(
-        "index",
-        &pages::Index {
-            now_date: clock::ymd(&now),
-            now_time: clock::hm(&now),
-            rows,
-            goals: goals::build_rows(&goal_list, &now),
-            markers: markers::build_rows(&marker_list),
-            summary: summary::build(&entries, &goal_list, &now),
-            chart_range,
-            history_range,
-            overnight_range,
-            overnight: overnight::build_summary(&pairs),
-            pairs,
-        },
-    )
+    html(&pages::Index {
+        now_date: now.ymd(),
+        now_time: now.hm(),
+        rows,
+        goals: goals::rows(&goal_list, &now),
+        summary: summary::summary(&entries, &goal_list, &now),
+        markers,
+        chart_range,
+        history_range,
+        overnight_range,
+        stats: overnight::stats(&nights),
+        nights,
+    })
 }
 
-/// Chart data as JSON for the client-side Chart.js instance.
-pub async fn chart(State(s): S, RawQuery(query): RawQuery) -> Response {
-    let q = Form::from_query(query.as_deref());
-    let or = |v: &str, d: &'static str| {
-        if v.is_empty() {
-            d.to_string()
-        } else {
-            v.to_string()
-        }
-    };
-    let range = or(q.get("range"), "30");
-    let series = or(q.get("series"), "all");
-    // The projection widens the axis, so — unlike the raw/trend toggles,
-    // which only hide client-side datasets — it changes what the server
-    // draws. The client sends the checkbox, "on" when ticked.
-    let show_projection = q.get("show-projection") == "on";
-    let (entries, goal_list, marker_list) =
-        match tokio::try_join!(s.db.list_entries(), s.db.list_goals(), s.db.list_markers()) {
-            Ok(lists) => lists,
-            Err(err) => return internal(err),
-        };
-    let data = chart::build(
-        &entries,
+pub async fn chart(State(s): S, RawQuery(query): RawQuery) -> Result {
+    let q = Fields::from_query(query.as_deref());
+    let (entries, goal_list, markers) =
+        tokio::try_join!(s.db.entries(), s.db.goals(), s.db.markers())?;
+    let range = Range::parse(or(q.get("range"), "30"), q.get("from"), q.get("until"));
+    let data = chart::chart(
+        &Timeline::new(&entries),
         &goal_list,
-        &marker_list,
+        &markers,
+        chart::Series::parse(q.get("series")),
         &range,
-        &series,
-        q.get("from"),
-        q.get("until"),
-        show_projection,
-        &(s.now)(),
+        // The projection widens the axis, so unlike the raw and trend
+        // toggles, which only hide datasets, it changes what is drawn.
+        q.get("show-projection") == "on",
+        &s.now(),
     );
     json(&data)
 }
 
-/// JSON with the trailing newline json.Encoder wrote.
-fn json(v: &impl serde::Serialize) -> Response {
-    match serde_json::to_string(v) {
-        Ok(mut body) => {
-            body.push('\n');
-            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
-        }
-        Err(err) => error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
+fn or<'a>(value: &'a str, default: &'a str) -> &'a str {
+    if value.is_empty() { default } else { value }
 }
 
-pub async fn summary(State(s): S) -> Response {
-    let (entries, goal_list) = match tokio::try_join!(s.db.list_entries(), s.db.list_goals()) {
-        Ok(lists) => lists,
-        Err(err) => return internal(err),
-    };
-    let data = summary::build(&entries, &goal_list, &(s.now)());
-    render("summary", &pages::Summary { summary: data })
-}
-
-/// The Overnight tab's stats and pairs table, filtered by the same
-/// range/from/until the other pickers submit. The calculator cards are not
-/// part of it: they compare fixed windows that ignore the filter.
-pub async fn overnight_tab(State(s): S, RawQuery(query): RawQuery) -> Response {
-    let entries = match s.db.list_entries().await {
-        Ok(e) => e,
-        Err(err) => return internal(err),
-    };
-    let q = Form::from_query(query.as_deref());
-    let range = if q.get("range").is_empty() {
-        "30"
-    } else {
-        q.get("range")
-    };
-    let window = timerange::resolve(range, q.get("from"), q.get("until"), &(s.now)());
-    let pairs = overnight::windowed_pairs(&entries, &window);
-    render(
-        "overnight-content",
-        &pages::OvernightContent {
-            overnight: overnight::build_summary(&pairs),
-            pairs,
-        },
+fn json(data: &impl Serialize) -> Result {
+    Ok((
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(data)?,
     )
+        .into_response())
 }
 
-/// The "Range by timescale" chart data, as JSON.
-pub async fn overnight_windows(State(s): S) -> Response {
-    let (entries, goal_list) = match tokio::try_join!(s.db.list_entries(), s.db.list_goals()) {
-        Ok(lists) => lists,
-        Err(err) => return internal(err),
-    };
-    json(&overnight::build_window_chart(
-        &entries,
+pub async fn summary(State(s): S) -> Result {
+    let (entries, goal_list) = tokio::try_join!(s.db.entries(), s.db.goals())?;
+    html(&pages::SummaryCard {
+        summary: summary::summary(&entries, &goal_list, &s.now()),
+    })
+}
+
+/// The Overnight tab's figures and table, for its range filter. The
+/// calculator above them compares fixed timescales and is left alone.
+pub async fn overnight(State(s): S, RawQuery(query): RawQuery) -> Result {
+    let q = Fields::from_query(query.as_deref());
+    let range = Range::parse(or(q.get("range"), "30"), q.get("from"), q.get("until"));
+    let nights = overnight::nights(
+        &Timeline::new(&s.db.entries().await?),
+        &range.window(&s.now()),
+    );
+    html(&pages::OvernightContent {
+        stats: overnight::stats(&nights),
+        nights,
+    })
+}
+
+pub async fn overnight_timescales(State(s): S) -> Result {
+    let (entries, goal_list) = tokio::try_join!(s.db.entries(), s.db.goals())?;
+    json(&overnight::timescales(
+        &Timeline::new(&entries),
         &goal_list,
-        &(s.now)(),
+        &s.now(),
     ))
 }
 
-/// The history list filtered to whatever period/range/from/until the request
-/// carries. Used as GET /entries, and by create, update and delete, so their
-/// own response reflects the filtered view rather than reverting to the
-/// default range.
-async fn render_entries_list(s: &Server, method: &Method, form: &Form) -> Response {
-    let entries = match s.db.list_entries().await {
-        Ok(e) => e,
-        Err(err) => return internal(err),
-    };
-    let now = (s.now)();
-    let range = if form.get("range").is_empty() {
-        "all"
-    } else {
-        form.get("range")
-    };
-    let window = timerange::resolve(range, form.get("from"), form.get("until"), &now);
-    let rows = history::filter_rows(
-        history::build_rows(&entries, &now),
-        form.get("period"),
-        &window,
+/// The history list, filtered as the request's period and range say — which
+/// is what the history filter sends, and what a change made with the list
+/// open includes, so the list comes back the way it was being viewed.
+async fn history(s: &Server, method: &Method, fields: &Fields) -> Result {
+    let now = s.now();
+    let range = Range::parse(
+        or(fields.get("range"), "all"),
+        fields.get("from"),
+        fields.get("until"),
     );
-    let mut res = render("entries-list", &pages::EntriesList { rows });
-    // Only a write changes what the summary and charts are drawn from. A
-    // plain GET — a filter change, or the periodic refresh that keeps the
-    // "Today"/"Yesterday" labels current — would otherwise redraw them all
-    // for nothing.
-    if method != Method::GET && method != Method::HEAD {
+    let period = fields.get("period").parse::<Period>().ok();
+    let rows = history::rows(&Timeline::new(&s.db.entries().await?), &now);
+    let mut res = html(&pages::EntriesList {
+        rows: history::filter(rows, period, &range.window(&now)),
+    })?;
+    // Only a change to the data redraws the summary and the charts; a plain
+    // GET — a filter change, or the refresh that keeps "Today" current —
+    // changes nothing they show.
+    if *method != Method::GET {
         res.headers_mut()
             .insert("HX-Trigger", HeaderValue::from_static("entries-changed"));
     }
-    res
+    Ok(res)
 }
 
-pub async fn entries_list(State(s): S, method: Method, form: Form) -> Response {
-    render_entries_list(&s, &method, &form).await
+pub async fn entries(State(s): S, method: Method, fields: Fields) -> Result {
+    history(&s, &method, &fields).await
 }
 
-/// Reads and validates an entry form's weight, timestamp and override.
-fn entry_fields(form: &Form) -> Result<(i64, jiff::Zoned, String), Response> {
-    let weight_g = parse_weight_g(form)?;
-    let recorded_at = parse_date_time(form, "recorded_at")
-        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "invalid recorded_at"))?;
-    let period_override = form.get("period_override");
-    if !weight::valid_period_override(period_override) {
-        return Err(error(StatusCode::BAD_REQUEST, "invalid period_override"));
-    }
-    Ok((weight_g, recorded_at, period_override.to_string()))
+pub async fn add_entry(State(s): S, method: Method, fields: Fields) -> Result {
+    s.db.add_entry(fields.entry()?, &s.now()).await?;
+    history(&s, &method, &fields).await
 }
 
-pub async fn entry_create(State(s): S, method: Method, form: Form) -> Response {
-    let (weight_g, recorded_at, period_override) = match entry_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) =
-        s.db.create_entry(&recorded_at, weight_g, &period_override, &(s.now)())
-            .await
-    {
-        return internal(err);
-    }
-    render_entries_list(&s, &method, &form).await
+pub async fn update_entry(State(s): S, Id(id): Id, method: Method, fields: Fields) -> Result {
+    let entry = fields.entry()?;
+    found(s.db.update_entry(id, entry).await?)?;
+    history(&s, &method, &fields).await
 }
 
-pub async fn entry_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let entry = match s.db.get_entry(id).await {
-        Ok(e) => e,
-        Err(err) => return error(StatusCode::NOT_FOUND, format!("{err:#}")),
-    };
-    let row = history::build_rows(&[entry], &(s.now)()).remove(0);
-    render("row-edit", &pages::EntryRowEdit { row })
+pub async fn delete_entry(State(s): S, Id(id): Id, method: Method, fields: Fields) -> Result {
+    found(s.db.delete_entry(id).await?)?;
+    history(&s, &method, &fields).await
 }
 
-pub async fn entry_cancel_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let entries = match s.db.list_entries().await {
-        Ok(e) => e,
-        Err(err) => return internal(err),
-    };
-    // From the full list, so the row keeps its delta chips.
-    match history::build_rows(&entries, &(s.now)())
+/// One history row, with its change worked out against the rest.
+async fn history_row(s: &Server, id: i64) -> Result<history::Row> {
+    let timeline = Timeline::new(&s.db.entries().await?);
+    history::rows(&timeline, &s.now())
         .into_iter()
         .find(|r| r.id == id)
-    {
-        Some(row) => render("row", &pages::EntryRow { row }),
-        None => homelab::http::plain_not_found(),
-    }
+        .ok_or(Error::NotFound)
 }
 
-pub async fn entry_update(
-    State(s): S,
-    Path(id): Path<String>,
-    method: Method,
-    form: Form,
-) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let (weight_g, recorded_at, period_override) = match entry_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) =
-        s.db.update_entry(id, &recorded_at, weight_g, &period_override)
-            .await
-    {
-        return internal(err);
-    }
-    render_entries_list(&s, &method, &form).await
+pub async fn edit_entry(State(s): S, Id(id): Id) -> Result {
+    html(&pages::EntryRowEdit {
+        row: history_row(&s, id).await?,
+    })
 }
 
-pub async fn entry_delete(
-    State(s): S,
-    Path(id): Path<String>,
-    method: Method,
-    form: Form,
-) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.delete_entry(id).await {
-        return delete_error(err);
-    }
-    render_entries_list(&s, &method, &form).await
+pub async fn show_entry(State(s): S, Id(id): Id) -> Result {
+    html(&pages::EntryRow {
+        row: history_row(&s, id).await?,
+    })
 }
 
-/// The goals card, firing goals-changed so the chart controls — which draw
-/// the goal line — refresh too.
-async fn render_goals_list(s: &Server) -> Response {
-    let goal_list = match s.db.list_goals().await {
-        Ok(g) => g,
-        Err(err) => return internal(err),
-    };
-    let goals = goals::build_rows(&goal_list, &(s.now)());
-    let mut res = render("goals-list", &pages::GoalsList { goals });
+/// The goals card. goals-changed redraws the chart, which draws the goal.
+async fn goals_list(s: &Server) -> Result {
+    let goals = goals::rows(&s.db.goals().await?, &s.now());
+    let mut res = html(&pages::GoalsList { goals })?;
     res.headers_mut()
         .insert("HX-Trigger", HeaderValue::from_static("goals-changed"));
-    res
+    Ok(res)
 }
 
-fn goal_fields(form: &Form) -> Result<(i64, jiff::Zoned), Response> {
-    let weight_g = parse_weight_g(form)?;
-    let from = parse_date(form, "effective_from")
-        .ok_or_else(|| error(StatusCode::BAD_REQUEST, "invalid effective_from"))?;
-    Ok((weight_g, from))
+pub async fn add_goal(State(s): S, fields: Fields) -> Result {
+    let (weight, from) = (fields.weight()?, fields.date("effective_from")?);
+    s.db.add_goal(weight, from, &s.now()).await?;
+    goals_list(&s).await
 }
 
-pub async fn goal_create(State(s): S, form: Form) -> Response {
-    let (weight_g, from) = match goal_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.create_goal(weight_g, &from, &(s.now)()).await {
-        return internal(err);
-    }
-    render_goals_list(&s).await
+pub async fn update_goal(State(s): S, Id(id): Id, fields: Fields) -> Result {
+    let (weight, from) = (fields.weight()?, fields.date("effective_from")?);
+    found(s.db.update_goal(id, weight, from).await?)?;
+    goals_list(&s).await
 }
 
-pub async fn goal_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let goal = match s.db.get_goal(id).await {
-        Ok(g) => g,
-        Err(err) => return error(StatusCode::NOT_FOUND, format!("{err:#}")),
-    };
-    let goal = goals::build_rows(&[goal], &(s.now)()).remove(0);
-    render("goal-row-edit", &pages::GoalRowEdit { goal })
+pub async fn delete_goal(State(s): S, Id(id): Id) -> Result {
+    found(s.db.delete_goal(id).await?)?;
+    goals_list(&s).await
 }
 
-pub async fn goal_cancel_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let goal_list = match s.db.list_goals().await {
-        Ok(g) => g,
-        Err(err) => return internal(err),
-    };
-    // From the full list, so "Current" is judged against the others.
-    match goals::build_rows(&goal_list, &(s.now)())
+/// One goal row, marked current against the others.
+async fn goal_row(s: &Server, id: i64) -> Result<goals::Row> {
+    goals::rows(&s.db.goals().await?, &s.now())
         .into_iter()
-        .find(|g| g.id == id)
-    {
-        Some(goal) => render("goal-row", &pages::GoalRow { goal }),
-        None => homelab::http::plain_not_found(),
-    }
+        .find(|r| r.goal.id == id)
+        .ok_or(Error::NotFound)
 }
 
-pub async fn goal_update(State(s): S, Path(id): Path<String>, form: Form) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let (weight_g, from) = match goal_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.update_goal(id, weight_g, &from).await {
-        return internal(err);
-    }
-    render_goals_list(&s).await
+pub async fn edit_goal(State(s): S, Id(id): Id) -> Result {
+    html(&pages::GoalRowEdit {
+        row: goal_row(&s, id).await?,
+    })
 }
 
-pub async fn goal_delete(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.delete_goal(id).await {
-        return delete_error(err);
-    }
-    render_goals_list(&s).await
+pub async fn show_goal(State(s): S, Id(id): Id) -> Result {
+    html(&pages::GoalRow {
+        row: goal_row(&s, id).await?,
+    })
 }
 
-/// The markers card, firing markers-changed so the chart refreshes too.
-async fn render_markers_list(s: &Server) -> Response {
-    let marker_list = match s.db.list_markers().await {
-        Ok(m) => m,
-        Err(err) => return internal(err),
-    };
-    let markers = markers::build_rows(&marker_list);
-    let mut res = render("markers-list", &pages::MarkersList { markers });
+/// The markers card. markers-changed redraws the chart.
+async fn markers_list(s: &Server) -> Result {
+    let markers = s.db.markers().await?;
+    let mut res = html(&pages::MarkersList { markers })?;
     res.headers_mut()
         .insert("HX-Trigger", HeaderValue::from_static("markers-changed"));
-    res
+    Ok(res)
 }
 
-fn marker_fields(form: &Form) -> Result<(jiff::Zoned, String), Response> {
-    let date =
-        parse_date(form, "date").ok_or_else(|| error(StatusCode::BAD_REQUEST, "invalid date"))?;
-    let note = form.get("note").trim();
-    if note.is_empty() {
-        return Err(error(StatusCode::BAD_REQUEST, "note is required"));
-    }
-    Ok((date, note.to_string()))
-}
-
-pub async fn marker_create(State(s): S, form: Form) -> Response {
-    let (date, note) = match marker_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.create_marker(&date, &note, &(s.now)()).await {
-        return internal(err);
-    }
-    render_markers_list(&s).await
-}
-
-pub async fn marker_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let marker = match s.db.get_marker(id).await {
-        Ok(m) => m,
-        Err(err) => return error(StatusCode::NOT_FOUND, format!("{err:#}")),
-    };
-    let marker = markers::build_rows(&[marker]).remove(0);
-    render("marker-row-edit", &pages::MarkerRowEdit { marker })
-}
-
-pub async fn marker_cancel_edit(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let marker_list = match s.db.list_markers().await {
-        Ok(m) => m,
-        Err(err) => return internal(err),
-    };
-    match markers::build_rows(&marker_list)
-        .into_iter()
-        .find(|m| m.id == id)
-    {
-        Some(marker) => render("marker-row", &pages::MarkerRow { marker }),
-        None => homelab::http::plain_not_found(),
+fn marker_fields(fields: &Fields) -> Result<(jiff::Zoned, String)> {
+    let date = fields.date("date")?;
+    match fields.get("note").trim() {
+        "" => Err(bad_request("note is required")),
+        note => Ok((date, note.to_string())),
     }
 }
 
-pub async fn marker_update(State(s): S, Path(id): Path<String>, form: Form) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    let (date, note) = match marker_fields(&form) {
-        Ok(f) => f,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.update_marker(id, &date, &note).await {
-        return internal(err);
-    }
-    render_markers_list(&s).await
+pub async fn add_marker(State(s): S, fields: Fields) -> Result {
+    let (date, note) = marker_fields(&fields)?;
+    s.db.add_marker(date, note, &s.now()).await?;
+    markers_list(&s).await
 }
 
-pub async fn marker_delete(State(s): S, Path(id): Path<String>) -> Response {
-    let id = match parse_id(&id) {
-        Ok(id) => id,
-        Err(res) => return res,
-    };
-    if let Err(err) = s.db.delete_marker(id).await {
-        return delete_error(err);
-    }
-    render_markers_list(&s).await
+pub async fn update_marker(State(s): S, Id(id): Id, fields: Fields) -> Result {
+    let (date, note) = marker_fields(&fields)?;
+    found(s.db.update_marker(id, date, note).await?)?;
+    markers_list(&s).await
 }
 
-/// Every weigh-in as CSV, oldest first — how a spreadsheet reads naturally
-/// and how the importer expects rows.
-///
-/// The header stays weight_kg: kilograms are what the app shows and a
-/// spreadsheet reader expects, the importer recognises the column, and three
-/// decimals of a kilogram are whole grams exactly, so a round trip back
-/// through import is lossless.
-pub async fn export(State(s): S) -> Response {
-    let mut entries = match s.db.list_entries().await {
-        Ok(e) => e,
-        Err(err) => return internal(err),
-    };
-    entries.sort_by_key(|e| e.recorded_at.timestamp());
+pub async fn delete_marker(State(s): S, Id(id): Id) -> Result {
+    found(s.db.delete_marker(id).await?)?;
+    markers_list(&s).await
+}
 
-    let mut w = csv::WriterBuilder::new()
+pub async fn edit_marker(State(s): S, Id(id): Id) -> Result {
+    let marker = s.db.marker(id).await?.ok_or(Error::NotFound)?;
+    html(&pages::MarkerRowEdit { marker })
+}
+
+pub async fn show_marker(State(s): S, Id(id): Id) -> Result {
+    let marker = s.db.marker(id).await?.ok_or(Error::NotFound)?;
+    html(&pages::MarkerRow { marker })
+}
+
+/// Every weigh-in as CSV, oldest first. The weight column stays in
+/// kilograms — what the app shows and a spreadsheet expects — and three
+/// decimals of a kilogram are whole grams, so a round trip through import
+/// loses nothing.
+pub async fn export(State(s): S) -> Result {
+    let timeline = Timeline::new(&s.db.entries().await?);
+    let mut csv = csv::WriterBuilder::new()
         .terminator(csv::Terminator::Any(b'\n'))
         .from_writer(Vec::new());
-    let written = std::iter::once(["recorded_at".to_string(), "weight_kg".to_string()])
-        .chain(entries.iter().map(|e| {
-            [
-                clock::rfc3339(&e.recorded_at),
-                weight::format_kg_input(e.weight_g),
-            ]
-        }))
-        .try_for_each(|record| w.write_record(&record));
-    let body = match written
-        .map_err(anyhow::Error::from)
-        .and_then(|()| w.into_inner().map_err(|e| anyhow::anyhow!("{e}")))
-    {
-        Ok(b) => b,
-        Err(err) => return internal(err),
-    };
-    let filename = format!("weight-tracker-export-{}.csv", clock::ymd(&(s.now)()));
+    csv.write_record(["recorded_at", "weight_kg"])?;
+    for e in timeline.entries() {
+        csv.write_record([e.recorded_at.rfc3339(), e.weight.input()])?;
+    }
+    let body = csv.into_inner().map_err(|e| e.into_error())?;
+    Ok(download(
+        "text/csv; charset=utf-8",
+        &format!("weight-tracker-export-{}.csv", s.now().ymd()),
+        body,
+    ))
+}
+
+fn download(content_type: &'static str, filename: &str, body: Vec<u8>) -> Response {
+    let disposition = format!("attachment; filename=\"{filename}\"");
     (
         [
-            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
-            ),
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         body,
     )
         .into_response()
 }
 
-pub async fn import_form() -> Response {
-    render("import", &pages::Import)
+pub async fn import_form() -> Result {
+    html(&pages::ImportForm)
 }
 
-/// How many unparseable rows the result page lists before summarising.
-const MAX_ERRORS_SHOWN: usize = 20;
+/// How many unreadable rows the result lists before saying how many more.
+const SHOWN_SKIPS: usize = 20;
 
-pub async fn import(State(s): S, mut multipart: Multipart) -> Response {
-    let mut file = None;
-    let mut unit = String::new();
-    loop {
-        match multipart.next_field().await {
-            Ok(Some(field)) => match field.name() {
-                Some("file") if file.is_none() => match field.bytes().await {
-                    Ok(b) => file = Some(b),
-                    Err(e) => return error(StatusCode::BAD_REQUEST, e.body_text()),
-                },
-                Some("unit") if unit.is_empty() => match field.text().await {
-                    Ok(t) => unit = t,
-                    Err(e) => return error(StatusCode::BAD_REQUEST, e.body_text()),
-                },
-                _ => {}
-            },
-            Ok(None) => break,
-            Err(e) => return error(StatusCode::BAD_REQUEST, e.body_text()),
+pub async fn import(State(s): S, mut form: Multipart) -> Result {
+    let (mut file, mut unit) = (None, None);
+    while let Some(field) = form
+        .next_field()
+        .await
+        .map_err(|e| bad_request(e.body_text()))?
+    {
+        match field.name() {
+            Some("file") => {
+                file = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| bad_request(e.body_text()))?,
+                )
+            }
+            Some("unit") => {
+                unit = Some(field.text().await.map_err(|e| bad_request(e.body_text()))?)
+            }
+            _ => {}
         }
     }
-    let Some(file) = file else {
-        return error(StatusCode::BAD_REQUEST, "missing file");
-    };
-    // Must stay in step with the unit select in templates/import.html and
-    // the units the importer accepts — "g" was once offered and refused.
-    if !matches!(unit.as_str(), "kg" | "lb" | "g") {
-        return error(StatusCode::BAD_REQUEST, "invalid unit");
-    }
-    let parsed = match importer::parse(&file[..], &unit) {
-        Ok(p) => p,
-        Err(err) => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                format!("could not parse CSV: {err:#}"),
-            );
-        }
-    };
+    let file = file.ok_or_else(|| bad_request("missing file"))?;
+    let unit: Unit = unit
+        .unwrap_or_default()
+        .parse()
+        .map_err(|_| bad_request("invalid unit"))?;
+    let import = importer::parse(&file[..], unit)
+        .map_err(|e| bad_request(format!("could not parse CSV: {e:#}")))?;
 
-    let existing = match s.db.existing_recorded_at_set().await {
-        Ok(e) => e,
-        Err(err) => return internal(err),
-    };
-    let parsed_rows = parsed.rows.len();
-    let rows = parsed
-        .rows
-        .into_iter()
-        .map(|r| NewEntry {
-            recorded_at: r.recorded_at,
-            weight_g: r.weight_g,
-        })
-        .collect();
-    let inserted = match s.db.bulk_create_entries(rows, existing, &(s.now)()).await {
-        Ok((n, _)) => n,
-        Err(err) => return internal(err),
-    };
-
-    let invalid = parsed.skipped.len();
-    let mut errors = parsed.skipped;
-    let truncated = errors.len().saturating_sub(MAX_ERRORS_SHOWN);
-    errors.truncate(MAX_ERRORS_SHOWN);
-    render(
-        "import-result",
-        &pages::ImportResult {
-            inserted,
-            duplicates: parsed_rows - inserted,
-            invalid,
-            errors,
-            truncated,
-        },
-    )
+    let read = import.readings.len();
+    let added = s.db.import(import.readings, &s.now()).await?;
+    let unreadable = import.skipped.len();
+    let mut shown = import.skipped;
+    shown.truncate(SHOWN_SKIPS);
+    html(&pages::ImportResult {
+        added,
+        duplicates: read - added,
+        unreadable,
+        not_shown: unreadable - shown.len(),
+        shown,
+    })
 }
 
-pub async fn delete_all(State(s): S) -> Response {
-    if let Err(err) = s.db.delete_all_data().await {
-        return internal(err);
-    }
-    // http.Redirect's 303 to a POST: the Location and nothing else.
-    (StatusCode::SEE_OTHER, [(header::LOCATION, "/")]).into_response()
+pub async fn delete_everything(State(s): S) -> Result {
+    s.db.delete_everything().await?;
+    Ok((StatusCode::SEE_OTHER, [(header::LOCATION, "/")]).into_response())
 }
 
-/// A consistent snapshot of the whole database as a download. Unlike the
-/// CSV — weigh-ins only — this is the SQLite file itself, so it restores
-/// goals, markers, period overrides and ids too: copy it into place and the
-/// app picks up where the snapshot was taken.
+/// A snapshot of the whole database to download: goals, markers, overrides
+/// and ids included, which the CSV cannot carry. Copied into place, the app
+/// carries on from it.
 ///
-/// Built with VACUUM INTO rather than by copying the file off disk, which
-/// would miss or tear what is still in the write-ahead log. It is staged in
-/// the temp directory — the Deployment mounts a writable /tmp for it — and
-/// read back into memory before the directory goes: the database is a few
-/// MB, and the staging copy is then gone however the download ends.
-pub async fn backup(State(s): S) -> Response {
-    let dir = match tempfile::Builder::new()
+/// It is written to the temp directory (the Deployment mounts a writable
+/// /tmp for it) and read back before the directory goes: the database is a
+/// few MB, and the copy is then gone however the download ends.
+pub async fn backup(State(s): S) -> Result {
+    let dir = tempfile::Builder::new()
         .prefix("weight-tracker-backup")
-        .tempdir()
-    {
-        Ok(d) => d,
-        Err(e) => {
-            return error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("could not create a staging directory: {e}"),
-            );
-        }
-    };
-    // VACUUM INTO refuses to overwrite, and the directory is new and empty.
-    let snapshot = dir.path().join("snapshot.db");
-    if let Err(err) = s.db.backup_to(&snapshot).await {
-        return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not create the snapshot: {err:#}"),
-        );
-    }
-    let body = match tokio::fs::read(&snapshot).await {
-        Ok(b) => b,
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    drop(dir);
-
-    let filename = format!("weight-tracker-backup-{}.db", clock::ymd(&(s.now)()));
-    (
-        [
-            (header::CONTENT_TYPE, "application/vnd.sqlite3".to_string()),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{filename}\""),
-            ),
-        ],
+        .tempdir()?;
+    let path = dir.path().join("snapshot.db");
+    s.db.backup_to(&path).await?;
+    let body = tokio::fs::read(&path).await?;
+    Ok(download(
+        "application/vnd.sqlite3",
+        &format!("weight-tracker-backup-{}.db", s.now().ymd()),
         body,
-    )
-        .into_response()
+    ))
 }

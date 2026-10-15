@@ -1,11 +1,11 @@
-<div class="entry-row" id="goal-{{ goal.id }}">
+<div class="entry-row" id="goal-{{ row.goal.id }}">
 	<div class="entry-main">
-		{% if goal.current %}<span class="chip chip-goal-current">Current</span>{% endif %}
-		<span class="entry-weight">{{ goal.weight_kg_str }} kg</span>
-		<span class="entry-date">from {{ goal.effective_from_label }}</span>
+		{% if row.current %}<span class="chip chip-goal-current">Current</span>{% endif %}
+		<span class="entry-weight">{{ row.goal.weight }} kg</span>
+		<span class="entry-date">from {{ row.goal.effective_from.date_label() }}</span>
 	</div>
 	<div class="entry-actions">
-		<button class="btn-text" hx-get="/goals/{{ goal.id }}/edit" hx-target="#goal-{{ goal.id }}" hx-swap="outerHTML">Edit</button>
-		<button class="btn-text btn-danger" hx-delete="/goals/{{ goal.id }}" hx-target="#goals-list" hx-swap="outerHTML" hx-confirm="Delete this goal?">Delete</button>
+		<button class="btn-text" hx-get="/goals/{{ row.goal.id }}/edit" hx-target="#goal-{{ row.goal.id }}" hx-swap="outerHTML">Edit</button>
+		<button class="btn-text btn-danger" hx-delete="/goals/{{ row.goal.id }}" hx-target="#goals-list" hx-swap="outerHTML" hx-confirm="Delete this goal?">Delete</button>
 	</div>
 </div>

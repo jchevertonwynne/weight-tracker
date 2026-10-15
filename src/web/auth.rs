@@ -136,8 +136,7 @@ fn bearer_matches(headers: &HeaderMap, token: &str) -> bool {
 /// /settings/delete-all and wipe every entry, or to POST /import and fill
 /// the chart with its own data.
 ///
-/// This is net/http's CrossOriginProtection, which the Go version used, rule
-/// for rule: a request other than GET, HEAD or OPTIONS whose Sec-Fetch-Site
+/// Refused: a request other than GET, HEAD or OPTIONS whose Sec-Fetch-Site
 /// says another site sent it, or, from a browser too old to send that
 /// header, whose Origin names another host. The app's own htmx requests and
 /// forms are same-origin and pass, and a request with neither header is not
@@ -189,7 +188,7 @@ fn cross_origin(req: &Request) -> bool {
     origin_host != Some(host.as_str())
 }
 
-/// Go's r.URL.Path is the decoded path, and the log line carried that.
+/// The path as a person would read it in a log line.
 fn decoded_path(raw: &str) -> String {
     percent_encoding::percent_decode_str(raw)
         .decode_utf8_lossy()

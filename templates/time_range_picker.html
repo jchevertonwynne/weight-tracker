@@ -8,31 +8,31 @@
 	data-url-param="{{ picker.param }}" data-default-range="{{ picker.default }}">
 	<span>Range</span>
 	<button type="button" class="time-range-btn" data-role="btn" aria-haspopup="true" aria-expanded="false">
-		<span data-role="label">{{ picker.label }}</span>
+		<span data-role="label">{{ picker.label() }}</span>
 		<span class="time-range-caret" aria-hidden="true">&#9662;</span>
 	</button>
-	<input type="hidden" name="range" data-role="range-input" value="{{ picker.range }}" autocomplete="off">
-	<input type="hidden" name="from" data-role="from-input" value="{{ picker.from }}" autocomplete="off">
-	<input type="hidden" name="until" data-role="until-input" value="{{ picker.until }}" autocomplete="off">
+	<input type="hidden" name="range" data-role="range-input" value="{{ picker.value() }}" autocomplete="off">
+	<input type="hidden" name="from" data-role="from-input" value="{{ picker.from() }}" autocomplete="off">
+	<input type="hidden" name="until" data-role="until-input" value="{{ picker.until() }}" autocomplete="off">
 	<div class="time-range-popover" data-role="popover" hidden>
 		<ul class="time-range-presets">
 			{#- timerange::PRESETS, not markup: the server has to know these to
 			    render a picker from the URL, and two lists would drift. #}
-			{% for p in picker.presets %}
-				<li><button type="button" class="time-range-preset{% if p.range == picker.range.as_str() %} active{% endif %}" data-range="{{ p.range }}" data-label="{{ p.label }}">{{ p.label }}</button></li>
+			{% for p in picker.presets() %}
+				<li><button type="button" class="time-range-preset{% if picker.value() == p.range %} active{% endif %}" data-range="{{ p.range }}" data-label="{{ p.label }}">{{ p.label }}</button></li>
 			{% endfor %}
 		</ul>
 		<div class="time-range-custom">
 			<h3>Custom range</h3>
 			<label class="field">
 				<span>From</span>
-				<input type="text" data-role="custom-from" value="{{ picker.from }}" autocomplete="off"
+				<input type="text" data-role="custom-from" value="{{ picker.from() }}" autocomplete="off"
 					inputmode="text" spellcheck="false"
 					placeholder="2026-01-01 or now-5d">
 			</label>
 			<label class="field">
 				<span>Until</span>
-				<input type="text" data-role="custom-until" value="{{ picker.until }}" autocomplete="off"
+				<input type="text" data-role="custom-until" value="{{ picker.until() }}" autocomplete="off"
 					inputmode="text" spellcheck="false"
 					placeholder="2026-08-16 or now">
 			</label>

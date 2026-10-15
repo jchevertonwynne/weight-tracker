@@ -1,13 +1,13 @@
 <div class="entry-row" id="entry-{{ row.id }}">
 	<div class="entry-main">
-		<span class="chip chip-{{ row.period }}">{{ row.period_label }}</span>
-		<span class="entry-date">{{ row.recorded_at_label }}</span>
-		<span class="entry-weight">{{ row.weight_kg_str }} kg</span>
-		{% if !row.overnight_delta.is_empty() %}
-			<span class="chip {% if row.overnight_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ row.overnight_delta }} overnight</span>
+		<span class="chip chip-{{ row.period }}">{{ row.period.label() }}</span>
+		<span class="entry-date">{{ row.when }}</span>
+		<span class="entry-weight">{{ row.weight }} kg</span>
+		{% if let Some(change) = row.overnight %}
+			<span class="chip {% if change.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ change.delta() }} overnight</span>
 		{% endif %}
-		{% if !row.daily_delta.is_empty() %}
-			<span class="chip {% if row.daily_gain %}chip-gain{% else %}chip-loss{% endif %}">{{ row.daily_delta }} today</span>
+		{% if let Some(change) = row.daily %}
+			<span class="chip {% if change.0 > 0 %}chip-gain{% else %}chip-loss{% endif %}">{{ change.delta() }} today</span>
 		{% endif %}
 	</div>
 	{#- A single edit affordance keeps the row compact; Delete lives inside the

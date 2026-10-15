@@ -1,5 +1,5 @@
 <tr id="marker-{{ marker.id }}">
-	<td class="entry-date">{{ marker.date_label }}</td>
+	<td class="entry-date">{{ marker.date.date_label() }}</td>
 	<td class="entry-note">{{ marker.note }}</td>
 	<td class="entry-actions">
 		<button class="btn-text" hx-get="/markers/{{ marker.id }}/edit" hx-target="#marker-{{ marker.id }}" hx-swap="outerHTML">Edit</button>

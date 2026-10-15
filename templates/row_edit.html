@@ -4,13 +4,13 @@
 		    to kilograms, which for an imported or unit-converted entry can
 		    carry three decimals (81.647). A 0.1 step would make the browser
 		    reject saving an untouched row. #}
-		<input type="number" step="any" min="0" name="weight_kg" value="{{ row.weight_kg_raw }}" required>
-		<input type="date" name="recorded_at_date" value="{{ row.recorded_at_date }}" required>
-		<input type="time" name="recorded_at_time" value="{{ row.recorded_at_time }}" required>
+		<input type="number" step="any" min="0" name="weight_kg" value="{{ row.weight.input() }}" required>
+		<input type="date" name="recorded_at_date" value="{{ row.recorded_at.ymd() }}" required>
+		<input type="time" name="recorded_at_time" value="{{ row.recorded_at.hm() }}" required>
 		<select name="period_override">
-			<option value="" {% if row.period_override.is_empty() %}selected{% endif %}>Auto</option>
-			<option value="morning" {% if row.period_override == "morning" %}selected{% endif %}>Morning</option>
-			<option value="evening" {% if row.period_override == "evening" %}selected{% endif %}>Evening</option>
+			<option value="" {% if row.override_value().is_empty() %}selected{% endif %}>Auto</option>
+			<option value="morning" {% if row.override_value() == "morning" %}selected{% endif %}>Morning</option>
+			<option value="evening" {% if row.override_value() == "evening" %}selected{% endif %}>Evening</option>
 		</select>
 		<button type="submit" class="btn btn-primary btn-small">Save</button>
 		<button type="button" class="btn-text btn-small" hx-get="/entries/{{ row.id }}" hx-target="#entry-{{ row.id }}" hx-swap="outerHTML">Cancel</button>

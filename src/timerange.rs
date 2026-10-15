@@ -1,17 +1,172 @@
-//! Resolves the "range"/"from"/"until" query parameters shared by the chart,
-//! history and overnight views into a concrete window.
+//! The time ranges the chart, the history and the overnight views are
+//! filtered by: what the range picker offers, how a range reads from and
+//! writes to the URL, and the window of time it covers.
 
 use std::sync::LazyLock;
 
-use jiff::{SignedDuration, Zoned};
+use jiff::{SignedDuration, Span, Zoned};
 use regex::Regex;
 
 use crate::clock;
 
-/// One entry in the picker's quick-range list. The list lives here rather
-/// than as markup because the server has to answer the same questions the
-/// popover does — which ranges exist, and what each is called — when it
-/// renders a picker from the URL.
+/// A span of time with either end open.
+#[derive(Clone, Debug, Default)]
+pub struct Window {
+    pub from: Option<Zoned>,
+    pub until: Option<Zoned>,
+}
+
+impl Window {
+    pub fn contains(&self, t: &Zoned) -> bool {
+        self.from.as_ref().is_none_or(|from| t >= from)
+            && self.until.as_ref().is_none_or(|until| t <= until)
+    }
+
+    #[cfg(test)]
+    pub fn is_unbounded(&self) -> bool {
+        self.from.is_none() && self.until.is_none()
+    }
+}
+
+/// A range as the query string spells it: `range` with, for a custom range,
+/// `from` and `until`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Range {
+    /// The last n days, today included.
+    Days(i64),
+    ThisYear,
+    All,
+    /// Each bound a date ("2026-01-01"), a time relative to now ("now-5d"),
+    /// or relative to the other bound ("to-5d", "from+5d"); either may be
+    /// blank.
+    Custom {
+        from: String,
+        until: String,
+    },
+}
+
+impl Range {
+    /// Anything unrecognised is all time.
+    pub fn parse(range: &str, from: &str, until: &str) -> Range {
+        match range {
+            "this-year" => Range::ThisYear,
+            "custom" => Range::Custom {
+                from: from.to_string(),
+                until: until.to_string(),
+            },
+            _ => match range.parse() {
+                Ok(days) if days > 0 => Range::Days(days),
+                _ => Range::All,
+            },
+        }
+    }
+
+    /// The `range` value in the query string.
+    pub fn value(&self) -> String {
+        match self {
+            Range::Days(n) => n.to_string(),
+            Range::ThisYear => "this-year".into(),
+            Range::All => "all".into(),
+            Range::Custom { .. } => "custom".into(),
+        }
+    }
+
+    /// The window this range covers as of `now`. Day counts, "this year" and
+    /// custom bounds all snap to whole days, start to midnight and end to the
+    /// last instant: a range is a span of dates, so every weigh-in on the days
+    /// it names is in it, whatever the time of day it is asked at.
+    pub fn window(&self, now: &Zoned) -> Window {
+        match self {
+            Range::All => Window::default(),
+            Range::Days(n) => Window {
+                from: now
+                    .checked_sub(Span::new().days(n - 1))
+                    .and_then(|t| t.start_of_day())
+                    .ok(),
+                until: None,
+            },
+            Range::ThisYear => Window {
+                from: now.first_of_year().and_then(|t| t.start_of_day()).ok(),
+                until: None,
+            },
+            Range::Custom { from, until } => custom(from, until, now),
+        }
+    }
+}
+
+/// Resolves custom bounds. Each resolves alone if it can (a date or a time
+/// relative to now); then a bound written relative to the other one ("to-5d"
+/// in from, "from+5d" in until) resolves against it. A bound that cannot
+/// resolve — blank, unparseable, or relative to a bound that is itself
+/// relative — leaves that end open.
+fn custom(from: &str, until: &str, now: &Zoned) -> Window {
+    let mut from_t = absolute(from, now);
+    let mut until_t = absolute(until, now);
+    if from_t.is_none() {
+        from_t = relative_to(from, "to", until_t.as_ref());
+    }
+    if until_t.is_none() {
+        until_t = relative_to(until, "from", from_t.as_ref());
+    }
+    Window {
+        from: from_t.and_then(|t| t.start_of_day().ok()),
+        until: until_t.and_then(|t| t.end_of_day().ok()),
+    }
+}
+
+/// "now", "now-<count><unit>" (only back: now never looks forward). The units
+/// are Grafana's, case-sensitive: m is minutes and M is months.
+static NOW: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^now(?:-([0-9]+)([smhdwMy]))?$").expect("a valid pattern"));
+
+/// "to" or "from", a sign, a count and a unit.
+static OTHER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(to|from)([+-])([0-9]+)([smhdwMy])$").expect("a valid pattern"));
+
+fn absolute(bound: &str, now: &Zoned) -> Option<Zoned> {
+    let bound = bound.trim();
+    if let Some(caps) = NOW.captures(bound) {
+        return match (caps.get(1), caps.get(2)) {
+            (Some(n), Some(unit)) => shift(now, -n.as_str().parse::<i64>().ok()?, unit.as_str()),
+            _ => Some(now.clone()),
+        };
+    }
+    clock::parse(bound, "%Y-%m-%d", now.time_zone())
+}
+
+fn relative_to(bound: &str, other: &str, anchor: Option<&Zoned>) -> Option<Zoned> {
+    let caps = OTHER.captures(bound.trim())?;
+    if &caps[1] != other {
+        return None;
+    }
+    let n: i64 = caps[3].parse().ok()?;
+    shift(anchor?, if &caps[2] == "-" { -n } else { n }, &caps[4])
+}
+
+/// `t` moved by `n` units. Days and longer are calendar arithmetic: a month
+/// from the 31st lands on the last day of a shorter month, and a day across a
+/// clock change keeps the time of day. None if the result is out of range.
+fn shift(t: &Zoned, n: i64, unit: &str) -> Option<Zoned> {
+    let fixed = |secs: i64| {
+        t.checked_add(SignedDuration::from_secs(n.checked_mul(secs)?))
+            .ok()
+    };
+    let calendar = |span: Result<Span, jiff::Error>| t.checked_add(span.ok()?).ok();
+    match unit {
+        "s" => fixed(1),
+        "m" => fixed(60),
+        "h" => fixed(3600),
+        "d" => calendar(Span::new().try_days(n)),
+        "w" => calendar(Span::new().try_weeks(n)),
+        "M" => calendar(Span::new().try_months(n)),
+        "y" => calendar(Span::new().try_years(n)),
+        _ => None,
+    }
+}
+
+/// A quick choice in the picker's popover. The list is here rather than in
+/// the markup because the server reads a range back from the URL, and must
+/// know which ones exist and what each is called.
 #[derive(Clone, Copy, Debug)]
 pub struct Preset {
     pub range: &'static str,
@@ -45,242 +200,84 @@ pub const PRESETS: [Preset; 6] = [
     },
 ];
 
-fn preset_label(range: &str) -> Option<&'static str> {
-    PRESETS.iter().find(|p| p.range == range).map(|p| p.label)
-}
+/// The longest custom bound taken from a URL. Bounds are free text echoed
+/// into the page, so length is what is worth limiting; static/app.js applies
+/// the same cap to a pasted range.
+const MAX_BOUND_LEN: usize = 64;
 
-/// What a custom range's button reads before static/app.js initialises; the
-/// client immediately rewrites it from the bounds.
-const CUSTOM_LABEL: &str = "Custom range";
-
-/// Caps a custom bound coming off the URL. Bounds are free text, so length
-/// is the only thing worth asserting, and an unbounded one would be echoed
-/// into three attributes of the page. Matches the cap static/app.js applies
-/// to a pasted range.
-pub const MAX_BOUND_LEN: usize = 64;
-
-/// The state of one instance of the shared time-range-picker partial — the
-/// chart, the history filter and the overnight filter each embed one, with
-/// different defaults.
+/// One range picker — the chart's, the history filter's, the overnight
+/// filter's — as the page renders it.
 #[derive(Clone, Debug)]
-pub struct PickerConfig {
-    /// The URL query parameter this instance reads and writes.
+pub struct Picker {
+    /// The query parameter it reads and writes.
     pub param: &'static str,
-    /// The preset shown when the URL says nothing about it.
+    /// The preset shown when the URL says nothing.
     pub default: &'static str,
-    /// The active preset ("30", "all", ...), or "custom".
-    pub range: String,
-    pub label: String,
-    /// Custom bounds, empty unless range is "custom".
-    pub from: String,
-    pub until: String,
-    pub presets: &'static [Preset],
+    pub range: Range,
 }
 
-/// One picker's state from the URL, falling back to `def` when the range is
-/// absent — and when it is unrecognised: [`resolve`] treats anything it does
-/// not know as unbounded, so a hand-edited link would otherwise show all
-/// time under a button still claiming something else.
-pub fn picker(
-    param: &'static str,
-    def: &'static str,
-    range: &str,
-    from: &str,
-    until: &str,
-) -> PickerConfig {
-    let mut cfg = PickerConfig {
-        param,
-        default: def,
-        range: def.to_string(),
-        label: String::new(),
-        from: String::new(),
-        until: String::new(),
-        presets: &PRESETS,
-    };
-    // Go's len() counts bytes, and so does this.
-    if range == "custom"
-        && (!from.is_empty() || !until.is_empty())
-        && from.len() <= MAX_BOUND_LEN
-        && until.len() <= MAX_BOUND_LEN
-    {
-        cfg.range = "custom".into();
-        cfg.from = from.into();
-        cfg.until = until.into();
-        cfg.label = CUSTOM_LABEL.into();
-        return cfg;
+impl Picker {
+    /// The picker's state from its query parameters (`chart`, `chart_from`,
+    /// `chart_until`). A range the popover does not offer falls back to the
+    /// default rather than becoming all time under a button that says
+    /// otherwise; a custom range needs at least one bound, and short ones.
+    pub fn from_query(
+        param: &'static str,
+        default: &'static str,
+        range: &str,
+        from: &str,
+        until: &str,
+    ) -> Picker {
+        let custom = range == "custom"
+            && !(from.is_empty() && until.is_empty())
+            && from.len() <= MAX_BOUND_LEN
+            && until.len() <= MAX_BOUND_LEN;
+        let offered = PRESETS.iter().any(|p| p.range == range);
+        let chosen = if custom || offered { range } else { default };
+        Picker {
+            param,
+            default,
+            range: Range::parse(chosen, from, until),
+        }
     }
-    if preset_label(range).is_some() {
-        cfg.range = range.into();
-    }
-    cfg.label = preset_label(&cfg.range).unwrap_or(&cfg.range).to_string();
-    cfg
-}
 
-impl PickerConfig {
-    /// What the picker is actually showing. Rendering content through this,
-    /// rather than separately parsed parameters, is what keeps the content
-    /// and the button describing it from disagreeing.
+    /// The `range` input's value.
+    pub fn value(&self) -> String {
+        self.range.value()
+    }
+
+    /// What the button says. A custom range's label is written by
+    /// static/app.js from its bounds; this is what shows until it runs.
+    pub fn label(&self) -> &'static str {
+        let value = self.value();
+        PRESETS
+            .iter()
+            .find(|p| p.range == value)
+            .map_or("Custom range", |p| p.label)
+    }
+
+    pub fn from(&self) -> &str {
+        match &self.range {
+            Range::Custom { from, .. } => from,
+            _ => "",
+        }
+    }
+
+    pub fn until(&self) -> &str {
+        match &self.range {
+            Range::Custom { until, .. } => until,
+            _ => "",
+        }
+    }
+
+    pub fn presets(&self) -> &'static [Preset] {
+        &PRESETS
+    }
+
+    /// What the picker is showing. Rendering through this is what keeps the
+    /// content and the button describing it from disagreeing.
     pub fn window(&self, now: &Zoned) -> Window {
-        resolve(&self.range, &self.from, &self.until, now)
-    }
-}
-
-/// A resolved bound, either side of which may be open: both for "all time",
-/// either for a custom range with that side left blank.
-#[derive(Clone, Debug, Default)]
-pub struct Window {
-    pub from: Option<Zoned>,
-    pub until: Option<Zoned>,
-}
-
-impl Window {
-    pub fn contains(&self, t: &Zoned) -> bool {
-        if let Some(from) = &self.from
-            && t.timestamp() < from.timestamp()
-        {
-            return false;
-        }
-        if let Some(until) = &self.until
-            && t.timestamp() > until.timestamp()
-        {
-            return false;
-        }
-        true
-    }
-
-    pub fn is_unbounded(&self) -> bool {
-        self.from.is_none() && self.until.is_none()
-    }
-}
-
-/// The "range" param as a window:
-///
-/// - a day count ("7", "30", ...) is an inclusive trailing window of whole
-///   days ending now, open at the top so today's entries show;
-/// - "this-year" runs from midnight on 1 January;
-/// - "custom" reads from/until instead;
-/// - "all", or anything unrecognised, is unbounded.
-pub fn resolve(range: &str, from: &str, until: &str, today: &Zoned) -> Window {
-    match range {
-        "custom" => return custom_window(from, until, today),
-        "this-year" => {
-            let start = clock::date(i64::from(today.year()), 1, 1, 0, 0, 0, 0, today.time_zone());
-            return Window {
-                from: Some(start),
-                until: None,
-            };
-        }
-        _ => {}
-    }
-    // strconv.Atoi: an optional sign and decimal digits, nothing else.
-    let Ok(days) = range.parse::<i64>() else {
-        return Window::default();
-    };
-    if days <= 0 {
-        return Window::default();
-    }
-    Window {
-        from: clock::try_add_date(&clock::start_of_day(today), 0, 0, -days + 1),
-        until: None,
-    }
-}
-
-/// The subset of Grafana's relative syntax worth supporting: "now", or "now-"
-/// a count and a unit. The units are Grafana's and case-sensitive the same
-/// way — "m" is minutes and "M" months. Only "-": "now" only ever looks back.
-static RELATIVE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^now(?:-([0-9]+)([smhdwMy]))?$").expect("a valid pattern"));
-
-/// A bound relative to the other one: "to-5d" in from ("five days before
-/// whatever until resolves to"), "from+5d" in until. Either sign, since
-/// either field can sit either side of the other.
-static CROSS_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(to|from)([+-])([0-9]+)([smhdwMy])$").expect("a valid pattern"));
-
-/// Shifts `t` by `count` units in the direction of `sign`. Days and larger
-/// are calendar arithmetic, so a month lands on the same day of the target
-/// month (normalised as Go normalises it), and a day across a DST boundary
-/// keeps its wall-clock time. None for a result out of range.
-fn apply_offset(t: &Zoned, sign: &str, count: i64, unit: &str) -> Option<Zoned> {
-    let n = if sign == "-" {
-        count.checked_neg()?
-    } else {
-        count
-    };
-    let seconds = |per: i64| {
-        let d = SignedDuration::from_secs(n.checked_mul(per)?);
-        t.checked_add(d).ok()
-    };
-    match unit {
-        "s" => seconds(1),
-        "m" => seconds(60),
-        "h" => seconds(3600),
-        "d" => clock::try_add_date(t, 0, 0, n),
-        "w" => clock::try_add_date(t, 0, 0, n.checked_mul(7)?),
-        "M" => clock::try_add_date(t, 0, n, 0),
-        "y" => clock::try_add_date(t, n, 0, 0),
-        _ => None,
-    }
-}
-
-/// "now-5d" against `now`.
-fn parse_relative_time(value: &str, now: &Zoned) -> Option<Zoned> {
-    let caps = RELATIVE.captures(value)?;
-    match (caps.get(1), caps.get(2)) {
-        (Some(n), Some(unit)) => apply_offset(now, "-", n.as_str().parse().ok()?, unit.as_str()),
-        _ => Some(now.clone()),
-    }
-}
-
-/// `value` as a reference to `keyword` ("to" or "from"), offset from the
-/// other side's already-resolved value. None if it references something
-/// else, or the other side never resolved.
-fn parse_cross_ref(value: &str, keyword: &str, anchor: Option<&Zoned>) -> Option<Zoned> {
-    let caps = CROSS_REF.captures(value.trim())?;
-    if &caps[1] != keyword {
-        return None;
-    }
-    apply_offset(anchor?, &caps[2], caps[3].parse().ok()?, &caps[4])
-}
-
-/// One side of a custom range: a date ("2026-01-01") or a relative
-/// expression ("now-5d"). Cross-references need the other side, so
-/// [`custom_window`] handles those.
-fn parse_range_bound(value: &str, now: &Zoned) -> Option<Zoned> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(t) = parse_relative_time(value, now) {
-        return Some(t);
-    }
-    clock::parse_in(value, "%Y-%m-%d", now.time_zone())
-}
-
-/// A custom range's from/until. Each side is independently optional — blank
-/// or unparseable leaves it open — and each accepts a date, a relative
-/// expression, or a reference to the other side, resolved once that side is
-/// known. A side that only makes sense through the other — blank, itself a
-/// cross-reference — leaves the reference with nothing to anchor to.
-///
-/// Both ends snap to whole days, start to 00:00 and end to 23:59:59.999...:
-/// a range is a span of dates, not instants, so every weigh-in on the named
-/// days is included. Without it "now-5d" at 14:30 would drop that morning's
-/// entry five days ago. The sub-day units round to the same boundaries.
-fn custom_window(from: &str, until: &str, now: &Zoned) -> Window {
-    let mut from_t = parse_range_bound(from, now);
-    let mut until_t = parse_range_bound(until, now);
-    // Second pass: whichever side did not resolve on its own gets a chance
-    // to resolve against the side that did.
-    if from_t.is_none() {
-        from_t = parse_cross_ref(from, "to", until_t.as_ref());
-    }
-    if until_t.is_none() {
-        until_t = parse_cross_ref(until, "from", from_t.as_ref());
-    }
-    Window {
-        from: from_t.map(|t| clock::start_of_day(&t)),
-        until: until_t.map(|t| clock::end_of_day(&t)),
+        self.range.window(now)
     }
 }
 
@@ -289,14 +286,11 @@ mod tests {
     use super::*;
     use crate::testsupport::at;
 
-    fn fmt(t: &Option<Zoned>) -> String {
-        t.as_ref()
-            .expect("bounded")
-            .strftime("%Y-%m-%d %H:%M:%S")
-            .to_string()
+    fn window(range: &str, from: &str, until: &str) -> Window {
+        Range::parse(range, from, until).window(&at("2026-08-16 14:30"))
     }
 
-    fn fmt_ms(t: &Option<Zoned>) -> String {
+    fn show(t: &Option<Zoned>) -> String {
         t.as_ref()
             .expect("bounded")
             .strftime("%Y-%m-%d %H:%M:%S%.3f")
@@ -304,243 +298,166 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cases() {
-        let today = at("2026-08-16 14:30");
-
-        // A preset is an inclusive trailing window of whole days, open-ended.
-        let w = resolve("7", "", "", &today);
-        assert!(w.until.is_none());
-        assert_eq!(fmt(&w.from), "2026-08-10 00:00:00");
-        assert_eq!(
-            fmt(&resolve("1", "", "", &today).from),
-            "2026-08-16 00:00:00"
-        );
-
-        assert!(resolve("all", "", "", &today).is_unbounded());
-        for p in ["", "nonsense", "0", "-5", "7.5"] {
-            assert!(resolve(p, "", "", &today).is_unbounded(), "range={p:?}");
-        }
-
-        // Custom reads from/until, inclusive of the whole until day.
-        let w = resolve("custom", "2026-08-01", "2026-08-10", &today);
-        assert_eq!(fmt(&w.from), "2026-08-01 00:00:00");
-        assert_eq!(fmt(&w.until), "2026-08-10 23:59:59");
-        assert!(w.contains(&at("2026-08-10 23:30")));
-
-        // Each side independently optional.
-        let w = resolve("custom", "2026-08-01", "", &today);
-        assert!(w.from.is_some() && w.until.is_none());
-        let w = resolve("custom", "", "2026-08-10", &today);
-        assert!(w.from.is_none() && w.until.is_some());
-        assert!(resolve("custom", "not-a-date", "also-not", &today).is_unbounded());
+    fn presets_are_whole_trailing_days() {
+        let w = window("7", "", "");
+        assert_eq!(show(&w.from), "2026-08-10 00:00:00.000");
+        assert!(w.until.is_none(), "open, so today's later entries show");
+        assert_eq!(show(&window("1", "", "").from), "2026-08-16 00:00:00.000");
+        let w = window("this-year", "", "");
+        assert_eq!(show(&w.from), "2026-01-01 00:00:00.000");
+        assert!(w.contains(&at("2026-01-01 00:00")) && !w.contains(&at("2025-12-31 23:59")));
     }
 
     #[test]
-    fn window_contains() {
-        let (from, until) = (at("2026-08-10 00:00"), at("2026-08-20 00:00"));
-        let both = Window {
-            from: Some(from.clone()),
-            until: Some(until),
+    fn anything_else_is_all_time() {
+        for range in ["all", "", "nonsense", "0", "-5", "7.5"] {
+            assert!(window(range, "", "").is_unbounded(), "{range:?}");
+        }
+    }
+
+    #[test]
+    fn contains_includes_its_ends() {
+        let w = Window {
+            from: Some(at("2026-08-10 00:00")),
+            until: Some(at("2026-08-20 00:00")),
         };
-        let lower = Window {
-            from: Some(from),
-            until: None,
-        };
-        for (name, w, t, want) in [
-            ("inside a bounded window", &both, "2026-08-15 12:00", true),
-            ("on the lower bound", &both, "2026-08-10 00:00", true),
-            ("on the upper bound", &both, "2026-08-20 00:00", true),
-            ("before a bounded window", &both, "2026-08-09 23:59", false),
-            ("after a bounded window", &both, "2026-08-20 00:01", false),
-            (
-                "unbounded accepts anything",
-                &Window::default(),
-                "1999-01-01 00:00",
-                true,
-            ),
-            (
-                "lower bound only, before",
-                &lower,
-                "2026-08-09 00:00",
-                false,
-            ),
-            (
-                "lower bound only, long after",
-                &lower,
-                "2030-01-01 00:00",
-                true,
-            ),
+        for (t, want) in [
+            ("2026-08-15 12:00", true),
+            ("2026-08-10 00:00", true),
+            ("2026-08-20 00:00", true),
+            ("2026-08-09 23:59", false),
+            ("2026-08-20 00:01", false),
         ] {
-            assert_eq!(w.contains(&at(t)), want, "{name}");
+            assert_eq!(w.contains(&at(t)), want, "{t}");
         }
+        assert!(Window::default().contains(&at("1999-01-01 00:00")));
     }
 
     #[test]
-    fn parse_relative_time_cases() {
-        let now = at("2026-08-16 14:30");
-        let secs = |s| clock::add(&now, SignedDuration::from_secs(s));
-        for (value, want) in [
-            ("now", now.clone()),
-            ("now-30s", secs(-30)),
-            ("now-45m", secs(-45 * 60)),
-            ("now-6h", secs(-6 * 3600)),
-            ("now-5d", clock::add_date(&now, 0, 0, -5)),
-            ("now-2w", clock::add_date(&now, 0, 0, -14)),
-            ("now-1M", clock::add_date(&now, 0, -1, 0)),
-            ("now-1y", clock::add_date(&now, -1, 0, 0)),
-            // Case-sensitive: m is minutes, so this is six minutes.
-            ("now-6m", secs(-6 * 60)),
-        ] {
-            let got =
-                parse_relative_time(value, &now).unwrap_or_else(|| panic!("{value} rejected"));
-            assert_eq!(got.timestamp(), want.timestamp(), "{value}");
-        }
-        for bad in [
-            "now+5d",
-            "now-5",
-            "now-d",
-            "5d",
-            "",
-            "tomorrow",
-            "2026-08-16",
-            "now-5x",
-            "NOW-5d",
-            "now-٣d",
-        ] {
-            assert!(
-                parse_relative_time(bad, &now).is_none(),
-                "{bad:?} was accepted"
-            );
-        }
-        // Out of range is unresolved, not a crash.
-        assert!(parse_relative_time("now-99999999y", &now).is_none());
-        assert!(resolve("custom", "now-99999999y", "", &now).is_unbounded());
-    }
-
-    #[test]
-    fn relative_time_is_calendar_arithmetic() {
-        // 31 March minus a month normalises as Go does, keeping the clock.
-        let got = parse_relative_time("now-1M", &at("2026-03-31 09:00")).unwrap();
-        assert_eq!(
-            got.strftime("%Y-%m-%d %H:%M").to_string(),
-            "2026-03-03 09:00"
-        );
-    }
-
-    #[test]
-    fn resolve_this_year() {
-        let w = resolve("this-year", "", "", &at("2026-08-16 14:30"));
-        assert!(w.until.is_none());
-        assert_eq!(fmt(&w.from), "2026-01-01 00:00:00");
-        assert!(w.contains(&at("2026-01-01 00:00")));
-        assert!(!w.contains(&at("2025-12-31 23:59")));
-    }
-
-    #[test]
-    fn custom_range_accepts_relative_expressions() {
-        let now = at("2026-08-16 14:30");
-
-        // The Grafana form, snapped to whole days at both ends.
-        let w = resolve("custom", "now-5d", "now", &now);
-        assert_eq!(fmt(&w.from), "2026-08-11 00:00:00");
-        assert_eq!(fmt_ms(&w.until), "2026-08-16 23:59:59.999");
-        assert!(w.contains(&at("2026-08-11 07:00")));
-        assert!(w.contains(&at("2026-08-16 21:00")));
-        assert!(!w.contains(&at("2026-08-10 21:00")));
-
-        // A date and a relative expression can be mixed.
-        let w = resolve("custom", "2026-01-01", "now-1M", &now);
-        assert_eq!(fmt(&w.from), "2026-01-01 00:00:00");
-        assert_eq!(fmt(&w.until), "2026-07-16 23:59:59");
-
-        // A bare date covers its whole day at both ends.
-        let w = resolve("custom", "2026-08-10", "2026-08-10", &now);
+    fn custom_dates_cover_whole_days() {
+        let w = window("custom", "2026-08-01", "2026-08-10");
+        assert_eq!(show(&w.from), "2026-08-01 00:00:00.000");
+        assert_eq!(show(&w.until), "2026-08-10 23:59:59.999");
+        let w = window("custom", "2026-08-10", "2026-08-10");
         assert!(w.contains(&at("2026-08-10 07:00")) && w.contains(&at("2026-08-10 21:00")));
         assert!(!w.contains(&at("2026-08-09 23:59")) && !w.contains(&at("2026-08-11 00:00")));
-
-        // Sub-day units round to the same day boundaries.
-        assert_eq!(
-            fmt(&resolve("custom", "now-6h", "now", &now).from),
-            "2026-08-16 00:00:00"
-        );
-
-        let w = resolve("custom", "now-90d", "", &now);
-        assert!(w.from.is_some() && w.until.is_none());
-        assert!(resolve("custom", "next tuesday", "whenever", &now).is_unbounded());
+        // Either end may be open.
+        assert!(window("custom", "2026-08-01", "").until.is_none());
+        assert!(window("custom", "", "2026-08-10").from.is_none());
+        assert!(window("custom", "not-a-date", "next tuesday").is_unbounded());
     }
 
     #[test]
-    fn custom_range_cross_references() {
+    fn custom_bounds_relative_to_now() {
+        let w = window("custom", "now-5d", "now");
+        assert_eq!(show(&w.from), "2026-08-11 00:00:00.000");
+        assert_eq!(show(&w.until), "2026-08-16 23:59:59.999");
+        assert!(w.contains(&at("2026-08-11 07:00")) && w.contains(&at("2026-08-16 21:00")));
+        assert_eq!(
+            show(&window("custom", "2026-01-01", "now-1M").until),
+            "2026-07-16 23:59:59.999"
+        );
+        // Sub-day units snap to the same day boundaries.
+        assert_eq!(
+            show(&window("custom", "now-6h", "now").from),
+            "2026-08-16 00:00:00.000"
+        );
+        // Months are calendar months: a month before 31 March is 28 February.
+        let w = Range::parse("custom", "now-1M", "").window(&at("2026-03-31 09:00"));
+        assert_eq!(show(&w.from), "2026-02-28 00:00:00.000");
+    }
+
+    #[test]
+    fn relative_syntax() {
         let now = at("2026-08-16 14:30");
-
-        let w = resolve("custom", "to-5d", "now", &now);
-        assert_eq!(fmt(&w.from), "2026-08-11 00:00:00");
-        assert_eq!(fmt_ms(&w.until), "2026-08-16 23:59:59.999");
-
-        let w = resolve("custom", "now-30d", "from+5d", &now);
-        assert_eq!(fmt(&w.from), "2026-07-17 00:00:00");
-        assert_eq!(fmt(&w.until), "2026-07-22 23:59:59");
-
-        let w = resolve("custom", "2026-08-01", "from+10d", &now);
-        assert_eq!(fmt(&w.until), "2026-08-11 23:59:59");
-
-        // Either sign either way; an inverted window just contains nothing.
-        let w = resolve("custom", "now", "from-5d", &now);
-        assert_eq!(fmt(&w.until), "2026-08-11 23:59:59");
-
-        // Mutual and self references have nothing to anchor to.
-        assert!(resolve("custom", "to-5d", "from+5d", &now).is_unbounded());
-        assert!(resolve("custom", "from-5d", "to+5d", &now).is_unbounded());
-        assert!(resolve("custom", "to-5d", "", &now).from.is_none());
+        for (bound, want) in [
+            ("now", "2026-08-16 14:30"),
+            ("now-45m", "2026-08-16 13:45"),
+            ("now-6m", "2026-08-16 14:24"), // m is minutes
+            ("now-6h", "2026-08-16 08:30"),
+            ("now-2w", "2026-08-02 14:30"),
+            ("now-1y", "2025-08-16 14:30"),
+        ] {
+            let got = absolute(bound, &now).unwrap_or_else(|| panic!("{bound}"));
+            assert_eq!(got.strftime("%Y-%m-%d %H:%M").to_string(), want, "{bound}");
+        }
+        for bad in [
+            "now+5d", "now-5", "now-d", "5d", "tomorrow", "now-5x", "NOW-5d", "now-٣d",
+        ] {
+            assert!(absolute(bad, &now).is_none(), "{bad:?}");
+        }
+        // Out of range leaves the end open rather than failing.
+        assert!(window("custom", "now-99999999y", "").is_unbounded());
     }
 
     #[test]
-    fn picker_cases() {
-        let cfg = picker("history", "all", "", "", "");
+    fn custom_bounds_relative_to_each_other() {
+        let w = window("custom", "to-5d", "now");
+        assert_eq!(show(&w.from), "2026-08-11 00:00:00.000");
+        let w = window("custom", "now-30d", "from+5d");
         assert_eq!(
-            (cfg.range.as_str(), cfg.label.as_str()),
-            ("all", "All time")
+            (show(&w.from), show(&w.until)),
+            (
+                "2026-07-17 00:00:00.000".into(),
+                "2026-07-22 23:59:59.999".into()
+            )
         );
-        assert_eq!((cfg.from.as_str(), cfg.until.as_str()), ("", ""));
-
-        let cfg = picker("overnight", "30", "this-year", "", "");
         assert_eq!(
-            (cfg.range.as_str(), cfg.label.as_str()),
-            ("this-year", "This year")
+            show(&window("custom", "2026-08-01", "from+10d").until),
+            "2026-08-11 23:59:59.999"
         );
+        // Either sign; an inverted window simply contains nothing.
+        assert_eq!(
+            show(&window("custom", "now", "from-5d").until),
+            "2026-08-11 23:59:59.999"
+        );
+        // Nothing to anchor to.
+        assert!(window("custom", "to-5d", "from+5d").is_unbounded());
+        assert!(window("custom", "from-5d", "to+5d").is_unbounded());
+        assert!(window("custom", "to-5d", "").from.is_none());
+    }
 
-        // Unrecognised falls back rather than widening the window.
-        for p in ["nonsense", "7.5", "custom"] {
-            assert_eq!(picker("chart", "30", p, "", "").range, "30", "{p}");
+    #[test]
+    fn pickers_read_the_url() {
+        let p = Picker::from_query("history", "all", "", "", "");
+        assert_eq!(
+            (p.value(), p.label(), p.from(), p.until()),
+            ("all".into(), "All time", "", "")
+        );
+        let p = Picker::from_query("overnight", "30", "this-year", "", "");
+        assert_eq!((p.value(), p.label()), ("this-year".into(), "This year"));
+        // Not offered, or a custom range with nothing in it: the default.
+        for range in ["nonsense", "7.5", "14", "custom"] {
+            assert_eq!(
+                Picker::from_query("chart", "30", range, "", "").value(),
+                "30",
+                "{range}"
+            );
         }
-
-        let cfg = picker("chart", "30", "custom", "now-5d", "now");
+        let p = Picker::from_query("chart", "30", "custom", "now-5d", "now");
         assert_eq!(
-            (cfg.range.as_str(), cfg.from.as_str(), cfg.until.as_str()),
-            ("custom", "now-5d", "now")
+            (p.value(), p.label(), p.from(), p.until()),
+            ("custom".into(), "Custom range", "now-5d", "now")
         );
-        let cfg = picker("chart", "30", "custom", "", "2026-01-01");
         assert_eq!(
-            (cfg.range.as_str(), cfg.until.as_str()),
-            ("custom", "2026-01-01")
+            Picker::from_query("chart", "30", "custom", "", "2026-01-01").until(),
+            "2026-01-01"
         );
-
         let long = "x".repeat(MAX_BOUND_LEN + 1);
-        assert_eq!(picker("chart", "30", "custom", &long, "now").range, "30");
-
-        let cfg = picker("overnight", "30", "7", "", "");
         assert_eq!(
-            cfg.window(&at("2026-08-16 14:30"))
-                .from
-                .unwrap()
-                .strftime("%Y-%m-%d")
-                .to_string(),
+            Picker::from_query("chart", "30", "custom", &long, "now").value(),
+            "30"
+        );
+        let w = Picker::from_query("overnight", "30", "7", "", "").window(&at("2026-08-16 14:30"));
+        assert_eq!(
+            w.from.unwrap().strftime("%Y-%m-%d").to_string(),
             "2026-08-10"
         );
-
         for p in PRESETS {
-            assert!(!p.range.is_empty() && !p.label.is_empty());
-            assert_eq!(picker("chart", "30", p.range, "", "").range, p.range);
+            assert_eq!(
+                Picker::from_query("chart", "30", p.range, "", "").value(),
+                p.range
+            );
         }
     }
 }

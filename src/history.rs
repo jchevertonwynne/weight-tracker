@@ -1,110 +1,75 @@
-//! The display-ready form of the weigh-in list — the History tab's table —
-//! with each row's overnight/daily delta chips and the period/date-range
-//! filter applied to it.
+//! The History tab: every weigh-in, with its change from the reading it pairs
+//! with, filtered by period and date range.
 
 use jiff::Zoned;
 
-use crate::db::Entry;
+use crate::clock::Show as _;
+use crate::model::{Grams, Period};
+use crate::timeline::Timeline;
 use crate::timerange::Window;
-use crate::{clock, weight};
 
 #[derive(Clone, Debug)]
 pub struct Row {
     pub id: i64,
-    /// Kept for [`filter_rows`]; not rendered directly.
     pub recorded_at: Zoned,
-    pub recorded_at_label: String,
-    /// For the edit form's date and time inputs.
-    pub recorded_at_date: String,
-    pub recorded_at_time: String,
-    pub period: String,
-    pub period_label: &'static str,
-    /// "", "morning" or "evening", for the edit form's select.
-    pub period_override: String,
-    pub weight_kg_raw: String,
-    pub weight_kg_str: String,
-    /// Set on morning entries: against the prior evening.
-    pub overnight_delta: String,
-    pub overnight_loss: bool,
-    /// Set on evening entries: against that same day's morning.
-    pub daily_delta: String,
-    pub daily_gain: bool,
+    pub period: Period,
+    pub period_override: Option<Period>,
+    pub weight: Grams,
+    /// "Today 07:15", "Yesterday 21:40", or the full date.
+    pub when: String,
+    /// On a morning: the change from the evening before.
+    pub overnight: Option<Grams>,
+    /// On an evening: the change from that day's morning.
+    pub daily: Option<Grams>,
 }
 
-/// Whether `a` and `b` fall on the same calendar day, both read in `now`'s
-/// zone, so a weigh-in stored in another zone is judged against the day the
-/// user is in.
-fn same_day(a: &Zoned, b: &Zoned, now: &Zoned) -> bool {
-    a.with_time_zone(now.time_zone().clone()).date()
-        == b.with_time_zone(now.time_zone().clone()).date()
-}
-
-/// A weigh-in's timestamp relative to now: today's and yesterday's rows say
-/// "Today"/"Yesterday" in place of the date, and anything older keeps the
-/// full date. The most-looked-at rows stay scannable, and whether today has
-/// been tracked is obvious at a glance, without dropping the year older
-/// readings need.
-fn recorded_at_label(recorded_at: &Zoned, now: &Zoned) -> String {
-    if same_day(recorded_at, now, now) {
-        format!("Today {}", clock::hm(recorded_at))
-    } else if same_day(recorded_at, &clock::add_date(now, 0, 0, -1), now) {
-        format!("Yesterday {}", clock::hm(recorded_at))
-    } else {
-        clock::datetime_label(recorded_at)
+impl Row {
+    /// The period select's value: "" for "follow the clock".
+    pub fn override_value(&self) -> &'static str {
+        self.period_override.map_or("", Period::as_str)
     }
 }
 
-/// Entries as display-ready rows, with delta chips and now-relative labels.
-pub fn build_rows(entries: &[Entry], now: &Zoned) -> Vec<Row> {
-    let (_, overnight, daily) = weight::chronological_with_deltas(entries);
-    entries
+/// Every entry as a row, newest first. Rows are built from the whole
+/// timeline and only then filtered, so a row keeps its change even when the
+/// reading it pairs with is filtered out.
+pub fn rows(timeline: &Timeline, now: &Zoned) -> Vec<Row> {
+    timeline
+        .entries()
         .iter()
-        .map(|e| {
-            let period = weight::entry_period(e).to_string();
-            let mut row = Row {
-                id: e.id,
-                recorded_at: e.recorded_at.clone(),
-                recorded_at_label: recorded_at_label(&e.recorded_at, now),
-                recorded_at_date: clock::ymd(&e.recorded_at),
-                recorded_at_time: clock::hm(&e.recorded_at),
-                period_label: if period == "morning" {
-                    "Morning"
-                } else {
-                    "Evening"
-                },
-                period,
-                period_override: e.period_override.clone(),
-                weight_kg_raw: weight::format_kg_input(e.weight_g),
-                weight_kg_str: weight::format_kg(e.weight_g),
-                overnight_delta: String::new(),
-                overnight_loss: false,
-                daily_delta: String::new(),
-                daily_gain: false,
-            };
-            if let Some(&d) = overnight.get(&e.id) {
-                row.overnight_loss = d < 0;
-                row.overnight_delta = weight::format_kg_delta(d);
-            }
-            if let Some(&d) = daily.get(&e.id) {
-                row.daily_gain = d > 0;
-                row.daily_delta = weight::format_kg_delta(d);
-            }
-            row
+        .rev()
+        .map(|e| Row {
+            id: e.id,
+            recorded_at: e.recorded_at.clone(),
+            period: e.period(),
+            period_override: e.period_override,
+            weight: e.weight,
+            when: when(&e.recorded_at, now),
+            overnight: timeline.overnight(e.id),
+            daily: timeline.daily(e.id),
         })
         .collect()
 }
 
-/// Rows whose period matches (""/"all" for any) and whose time falls in the
-/// window.
-///
-/// This filters [`build_rows`]' output rather than the entries, since the
-/// deltas need the full chronology: filtering to mornings first would starve
-/// the overnight delta of the evenings it is computed against.
-pub fn filter_rows(rows: Vec<Row>, period: &str, window: &Window) -> Vec<Row> {
+pub fn filter(rows: Vec<Row>, period: Option<Period>, window: &Window) -> Vec<Row> {
     rows.into_iter()
-        .filter(|r| period.is_empty() || period == "all" || r.period == period)
+        .filter(|r| period.is_none_or(|p| r.period == p))
         .filter(|r| window.contains(&r.recorded_at))
         .collect()
+}
+
+/// Today's and yesterday's readings say so in place of the date — the rows
+/// looked at most, and the quickest way to see whether today is logged.
+/// Older ones keep the year.
+fn when(t: &Zoned, now: &Zoned) -> String {
+    let day = t.with_time_zone(now.time_zone().clone()).date();
+    if day == now.date() {
+        format!("Today {}", t.hm())
+    } else if now.date().yesterday().ok() == Some(day) {
+        format!("Yesterday {}", t.hm())
+    } else {
+        t.datetime_label()
+    }
 }
 
 #[cfg(test)]
@@ -113,51 +78,62 @@ mod tests {
     use crate::testsupport::{at, entry};
 
     #[test]
-    fn build_rows_cases() {
-        let entries = [
-            // Newest first, as list_entries returns them.
-            entry(2, at("2026-08-16 07:15"), 82.04, ""),
-            entry(1, at("2026-08-15 21:00"), 83.1, ""),
-        ];
-        let rows = build_rows(&entries, &at("2026-09-01 12:00"));
-        assert_eq!(rows.len(), 2);
-        let m = &rows[0];
-        assert_eq!((m.period.as_str(), m.period_label), ("morning", "Morning"));
-        assert_eq!(m.weight_kg_str, "82.0", "display rounds to 1dp");
-        assert_eq!(m.weight_kg_raw, "82.04", "edit form keeps full precision");
+    fn rows_carry_their_changes() {
+        let t = Timeline::new(&[
+            entry(1, "2026-08-15 21:00", 83.1),
+            entry(2, "2026-08-16 07:15", 82.04),
+            entry(3, "2026-08-16 21:00", 82.7),
+        ]);
+        let rows = rows(&t, &at("2026-09-01 12:00"));
         assert_eq!(
-            (m.recorded_at_date.as_str(), m.recorded_at_time.as_str()),
-            ("2026-08-16", "07:15")
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [3, 2, 1],
+            "newest first"
         );
-        assert_eq!(m.recorded_at_label, "Aug 16, 2026 07:15");
-        assert_eq!(m.overnight_delta, "-1.1 kg");
-        assert!(m.overnight_loss);
-        assert_eq!(rows[1].period_label, "Evening");
-        assert_eq!(rows[1].overnight_delta, "");
+        let morning = &rows[1];
+        assert_eq!(morning.period, Period::Morning);
+        assert_eq!(morning.weight.to_string(), "82.0");
+        assert_eq!(morning.weight.input(), "82.04");
+        assert_eq!(morning.when, "Aug 16, 2026 07:15");
+        assert_eq!(
+            morning.overnight.map(|g| g.delta().to_string()),
+            Some("-1.1 kg".into())
+        );
+        assert_eq!(rows[0].daily, Some(Grams(660)));
+        assert_eq!((rows[2].overnight, rows[2].daily), (None, None));
     }
 
     #[test]
-    fn build_rows_formats_gains_with_a_sign() {
-        let entries = [
-            entry(2, at("2026-08-15 21:00"), 83.1, ""),
-            entry(1, at("2026-08-15 07:30"), 82.4, ""),
-        ];
-        let rows = build_rows(&entries, &at("2026-09-01 12:00"));
-        assert_eq!(rows[0].daily_delta, "+0.7 kg");
-        assert!(rows[0].daily_gain);
+    fn recent_rows_say_today_and_yesterday() {
+        let t = Timeline::new(&[
+            entry(1, "2026-08-15 07:30", 83.1),
+            entry(2, "2026-09-19 23:50", 81.4),
+            entry(3, "2026-09-20 08:12", 81.0),
+        ]);
+        let when: Vec<String> = rows(&t, &at("2026-09-20 21:30"))
+            .into_iter()
+            .map(|r| r.when)
+            .collect();
+        assert_eq!(
+            when,
+            ["Today 08:12", "Yesterday 23:50", "Aug 15, 2026 07:30"]
+        );
     }
 
     #[test]
-    fn build_rows_labels_dates_relative_to_now() {
-        let entries = [
-            entry(3, at("2026-09-20 08:12"), 81.0, ""),
-            // Hours away, but the day before.
-            entry(2, at("2026-09-19 23:50"), 81.4, ""),
-            entry(1, at("2026-08-15 07:30"), 83.1, ""),
-        ];
-        let rows = build_rows(&entries, &at("2026-09-20 21:30"));
-        assert_eq!(rows[0].recorded_at_label, "Today 08:12");
-        assert_eq!(rows[1].recorded_at_label, "Yesterday 23:50");
-        assert_eq!(rows[2].recorded_at_label, "Aug 15, 2026 07:30");
+    fn filtering_keeps_changes_whose_partner_is_filtered_out() {
+        let t = Timeline::new(&[
+            entry(1, "2026-08-15 21:00", 83.1),
+            entry(2, "2026-08-16 07:15", 82.0),
+        ]);
+        let all = rows(&t, &at("2026-09-01 12:00"));
+        let mornings = filter(all.clone(), Some(Period::Morning), &Window::default());
+        assert_eq!(mornings.len(), 1);
+        assert_eq!(mornings[0].overnight, Some(Grams(-1100)));
+        let window = Window {
+            from: Some(at("2026-08-16 00:00")),
+            until: None,
+        };
+        assert_eq!(filter(all, None, &window).len(), 1);
     }
 }

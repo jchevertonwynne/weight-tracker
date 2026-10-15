@@ -10,7 +10,7 @@ use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
 use super::Server;
-use crate::db::{self, Db};
+use crate::db::Db;
 
 const ALLOWED: &str = "allowed@example.com";
 const REMOVED: &str = "removed@example.com";
@@ -279,7 +279,7 @@ async fn cross_site_delete_all_is_refused() {
             .unwrap();
         assert_eq!(t.send(req).await.status, 403, "{h}: {v}");
     }
-    assert_eq!(t.db.list_entries().await.unwrap().len(), 1);
+    assert_eq!(t.db.entries().await.unwrap().len(), 1);
 
     // The app's own button is a same-origin form, and still works.
     let req = Request::post("/settings/delete-all")
@@ -290,7 +290,7 @@ async fn cross_site_delete_all_is_refused() {
     let res = t.send(req).await;
     assert_eq!(res.status, 303);
     assert_eq!(res.headers["location"], "/");
-    assert!(t.db.list_entries().await.unwrap().is_empty());
+    assert!(t.db.entries().await.unwrap().is_empty());
 }
 
 // --- Handlers -----------------------------------------------------------
@@ -302,10 +302,7 @@ async fn create_rejects_invalid_weights() {
     for w in ["-50", "0", "abc", "", "5000", "NaN", "Inf", "-Inf"] {
         let t = server();
         assert_eq!(t.create(&pairs(&entry_form(w))).await.status, 400, "{w:?}");
-        assert!(
-            t.db.list_entries().await.unwrap().is_empty(),
-            "{w:?} was stored"
-        );
+        assert!(t.db.entries().await.unwrap().is_empty(), "{w:?} was stored");
     }
 }
 
@@ -315,7 +312,7 @@ async fn create_accepts_valid_weights() {
         let t = server();
         let res = t.create(&pairs(&entry_form(w))).await;
         assert_eq!(res.status, 200, "{w}: {}", res.text());
-        assert_eq!(t.db.list_entries().await.unwrap().len(), 1);
+        assert_eq!(t.db.entries().await.unwrap().len(), 1);
     }
 }
 
@@ -354,7 +351,7 @@ async fn goal_create_rejects_invalid_weights() {
             )
             .await;
         assert_eq!(res.status, 400, "{w}");
-        assert!(t.db.list_goals().await.unwrap().is_empty());
+        assert!(t.db.goals().await.unwrap().is_empty());
     }
 }
 
@@ -380,6 +377,14 @@ async fn delete_missing_row_returns_404() {
     for path in ["/entries/999", "/goals/999", "/markers/999"] {
         assert_eq!(t.form("DELETE", path, &[]).await.status, 404, "{path}");
     }
+    assert_eq!(
+        t.form("PUT", "/entries/999", &pairs(&entry_form("80")))
+            .await
+            .status,
+        404
+    );
+    let goal = [("weight_kg", "78"), ("effective_from", "2026-08-01")];
+    assert_eq!(t.form("PUT", "/goals/999", &goal).await.status, 404);
     assert_eq!(t.form("DELETE", "/entries/abc", &[]).await.status, 400);
 }
 
@@ -387,14 +392,14 @@ async fn delete_missing_row_returns_404() {
 async fn delete_existing_entry_returns_200_and_removes_it() {
     let t = server();
     assert_eq!(t.create(&pairs(&entry_form("82.4"))).await.status, 200);
-    let id = t.db.list_entries().await.unwrap()[0].id;
+    let id = t.db.entries().await.unwrap()[0].id;
     assert_eq!(
         t.form("DELETE", &format!("/entries/{id}"), &[])
             .await
             .status,
         200
     );
-    assert!(t.db.list_entries().await.unwrap().is_empty());
+    assert!(t.db.entries().await.unwrap().is_empty());
     assert_eq!(
         t.form("DELETE", &format!("/entries/{id}"), &[])
             .await
@@ -424,11 +429,11 @@ async fn mutations_preserve_the_selected_date_range() {
             assert_eq!(t.create(&pairs(&f)).await.status, 200);
         }
         let id =
-            t.db.list_entries()
+            t.db.entries()
                 .await
                 .unwrap()
                 .iter()
-                .find(|e| e.weight_g == 70000)
+                .find(|e| e.weight.0 == 70000)
                 .unwrap()
                 .id;
         (t, id)
@@ -470,7 +475,7 @@ async fn mutations_preserve_the_selected_date_range() {
 async fn edit_and_cancel_render_the_row() {
     let t = server();
     t.create(&pairs(&entry_form("82.4"))).await;
-    let id = t.db.list_entries().await.unwrap()[0].id;
+    let id = t.db.entries().await.unwrap()[0].id;
     let edit = t.ask(&format!("/entries/{id}/edit"), ALLOWED).await.text();
     assert!(edit.contains(r#"value="82.4""#) && edit.contains("entry-row-editing"));
     let row = t.ask(&format!("/entries/{id}"), ALLOWED).await.text();
@@ -531,8 +536,8 @@ async fn import_accepts_every_unit_the_form_offers() {
         let t = server();
         let res = t.upload(csv, unit).await;
         assert_eq!(res.status, 200, "{unit}: {}", res.text());
-        let entries = t.db.list_entries().await.unwrap();
-        assert_eq!((entries.len(), entries[0].weight_g), (1, want), "{unit}");
+        let entries = t.db.entries().await.unwrap();
+        assert_eq!((entries.len(), entries[0].weight.0), (1, want), "{unit}");
     }
     let t = server();
     assert_eq!(
@@ -550,7 +555,7 @@ async fn import_is_idempotent() {
     for _ in 0..2 {
         assert_eq!(t.upload(csv, "kg").await.status, 200);
     }
-    assert_eq!(t.db.list_entries().await.unwrap().len(), 2);
+    assert_eq!(t.db.entries().await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -584,14 +589,14 @@ async fn export_round_trips_through_import() {
     let fresh = server();
     assert_eq!(fresh.upload(&exported, "kg").await.status, 200);
     let (a, b) = (
-        t.db.list_entries().await.unwrap(),
-        fresh.db.list_entries().await.unwrap(),
+        t.db.entries().await.unwrap(),
+        fresh.db.entries().await.unwrap(),
     );
     assert_eq!(a.len(), b.len());
     for (x, y) in a.iter().zip(&b) {
         assert_eq!(
-            (x.weight_g, x.recorded_at.timestamp()),
-            (y.weight_g, y.recorded_at.timestamp())
+            (x.weight, x.recorded_at.timestamp()),
+            (y.weight, y.recorded_at.timestamp())
         );
     }
 }
@@ -665,9 +670,9 @@ async fn delete_all_clears_everything() {
         t.form("POST", "/settings/delete-all", &[]).await.status,
         303
     );
-    assert!(t.db.list_entries().await.unwrap().is_empty());
-    assert!(t.db.list_goals().await.unwrap().is_empty());
-    assert!(t.db.list_markers().await.unwrap().is_empty());
+    assert!(t.db.entries().await.unwrap().is_empty());
+    assert!(t.db.goals().await.unwrap().is_empty());
+    assert!(t.db.markers().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -698,18 +703,15 @@ async fn backup_serves_a_restorable_database() {
     let path = dir.path().join("restored.db");
     std::fs::write(&path, &res.body).unwrap();
     let restored = Db::open(&path).unwrap();
-    let entries = restored.list_entries().await.unwrap();
-    assert_eq!((entries.len(), entries[0].weight_g), (1, 82400));
-    assert_eq!(
-        restored.list_markers().await.unwrap()[0].note,
-        "started cutting"
-    );
+    let entries = restored.entries().await.unwrap();
+    assert_eq!((entries.len(), entries[0].weight.0), (1, 82400));
+    assert_eq!(restored.markers().await.unwrap()[0].note, "started cutting");
 
     // The live database is undisturbed.
     let mut f = entry_form("81.9");
     f[2].1 = "21:00".into();
     assert_eq!(t.create(&pairs(&f)).await.status, 200);
-    assert_eq!(t.db.list_entries().await.unwrap().len(), 2);
+    assert_eq!(t.db.entries().await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -812,5 +814,4 @@ async fn metrics_label_routes_as_the_go_version_did() {
     ] {
         assert!(body.contains(series), "missing {series}");
     }
-    let _ = db::grams_to_kg(0);
 }

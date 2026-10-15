@@ -1,42 +1,42 @@
 {#- The htmx-swappable fragment, holding exactly what the range filter
     scopes: the stats and the pairs table. The calculator is out of it on
     purpose — swapping it would tear down and rebuild a chart whose data never
-    depended on the range. Reads `overnight` and `pairs`, which the full page
-    and the /overnight fragment both supply. -#}
+    depended on the range. Reads `stats` and `nights`, which the full page and
+    the /overnight fragment both supply. -#}
 <div id="overnight-content">
 	<section class="card">
 		<h2>Overnight</h2>
-		{% if !overnight.empty.is_empty() %}
-			<p class="empty">{{ overnight.empty }}</p>
-		{% else %}
+		{% if let Some(s) = stats %}
 			<div class="summary-stats" data-role="overnight-stats">
 				<div class="stat-tile">
 					<span class="stat-label">Nights logged</span>
-					<span class="stat-value">{{ overnight.count }}</span>
+					<span class="stat-value">{{ s.count }}</span>
 				</div>
 				<div class="stat-tile">
 					<span class="stat-label">Last night</span>
-					<span class="chip {% if overnight.last_is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ overnight.last_str }}</span>
+					<span class="chip {% if s.last.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ s.last.delta() }}</span>
 				</div>
 				<div class="stat-tile">
 					<span class="stat-label">Typical (average)</span>
-					<span class="chip {% if overnight.avg_is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ overnight.avg_str }}</span>
+					<span class="chip {% if s.typical.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ s.typical.delta() }}</span>
 				</div>
 				<div class="stat-tile">
 					<span class="stat-label">Safe (smallest loss)</span>
-					<span class="chip {% if overnight.best_case_is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ overnight.best_case_str }}</span>
+					<span class="chip {% if s.safest.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ s.safest.delta() }}</span>
 				</div>
 				<div class="stat-tile">
 					<span class="stat-label">Largest loss</span>
-					<span class="chip {% if overnight.worst_case_is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ overnight.worst_case_str }}</span>
+					<span class="chip {% if s.biggest_loss.is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ s.biggest_loss.delta() }}</span>
 				</div>
 			</div>
+		{% else %}
+			<p class="empty">Not enough data yet — log an evening weigh-in followed by the next morning's to see overnight stats.</p>
 		{% endif %}
 	</section>
 
 	<section class="card">
 		<h2>Overnight history</h2>
-		{% if pairs.is_empty() %}
+		{% if nights.is_empty() %}
 			<p class="empty">No overnight pairs in this range yet.</p>
 		{% else %}
 			<table class="entry-table">
@@ -48,11 +48,11 @@
 					</tr>
 				</thead>
 				<tbody>
-					{% for p in pairs %}
+					{% for night in nights %}
 						<tr>
-							<td class="entry-date">{{ p.evening_label }}<br>{{ p.evening_weight_str }} kg</td>
-							<td class="entry-date">{{ p.morning_label }}<br>{{ p.morning_weight_str }} kg</td>
-							<td><span class="chip {% if p.is_loss %}chip-loss{% else %}chip-gain{% endif %}">{{ p.delta_str }}</span></td>
+							<td class="entry-date">{{ night.evening.recorded_at.datetime_label() }}<br>{{ night.evening.weight }} kg</td>
+							<td class="entry-date">{{ night.morning.recorded_at.datetime_label() }}<br>{{ night.morning.weight }} kg</td>
+							<td><span class="chip {% if night.change().is_loss() %}chip-loss{% else %}chip-gain{% endif %}">{{ night.change().delta() }}</span></td>
 						</tr>
 					{% endfor %}
 				</tbody>

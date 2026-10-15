@@ -1,6 +1,7 @@
 //! The HTTP surface: the route table, who may call it, and the handlers.
 
 mod auth;
+mod error;
 mod form;
 mod handlers;
 mod pages;
@@ -52,6 +53,10 @@ impl Server {
         }
     }
 
+    fn now(&self) -> Zoned {
+        (self.now)()
+    }
+
     /// The route table, with every application route behind authenticate.
     ///
     /// The split is the point. Application routes are one router with one
@@ -74,9 +79,9 @@ impl Server {
             .index_file(None)
             .cache_control(memory_serve::CacheControl::NoCache)
             .into_router()
-            // A file that is not there is a plain 404 for anyone, as the Go
-            // file server answered: /static/ is outside authenticate, and
-            // a miss must not fall through to the app router that is not.
+            // /static/ is outside authenticate, so a miss is a plain 404
+            // here rather than falling through to the app router, which
+            // would ask who is calling.
             .fallback(|| async { homelab::http::plain_not_found() });
         let outer = Router::new()
             .route("/healthz", get(healthz))
@@ -89,42 +94,38 @@ impl Server {
             .nest("/static", statics)
             .with_state(self.clone());
 
-        // refuse_cross_origin outermost, as the Go version had it around
-        // everything: a cross-site request is refused before anyone asks who
-        // sent it.
+        // refuse_cross_origin outermost: a cross-site request is refused
+        // before anyone asks who sent it.
         let app = Router::new()
             .route("/", get(handlers::index))
             .route("/chart", get(handlers::chart))
             .route("/summary", get(handlers::summary))
-            .route("/overnight", get(handlers::overnight_tab))
-            .route("/overnight/windows", get(handlers::overnight_windows))
-            .route(
-                "/entries",
-                get(handlers::entries_list).post(handlers::entry_create),
-            )
+            .route("/overnight", get(handlers::overnight))
+            .route("/overnight/windows", get(handlers::overnight_timescales))
+            .route("/entries", get(handlers::entries).post(handlers::add_entry))
             .route(
                 "/entries/{id}",
-                get(handlers::entry_cancel_edit)
-                    .put(handlers::entry_update)
-                    .delete(handlers::entry_delete),
+                get(handlers::show_entry)
+                    .put(handlers::update_entry)
+                    .delete(handlers::delete_entry),
             )
-            .route("/entries/{id}/edit", get(handlers::entry_edit))
-            .route("/goals", post(handlers::goal_create))
+            .route("/entries/{id}/edit", get(handlers::edit_entry))
+            .route("/goals", post(handlers::add_goal))
             .route(
                 "/goals/{id}",
-                get(handlers::goal_cancel_edit)
-                    .put(handlers::goal_update)
-                    .delete(handlers::goal_delete),
+                get(handlers::show_goal)
+                    .put(handlers::update_goal)
+                    .delete(handlers::delete_goal),
             )
-            .route("/goals/{id}/edit", get(handlers::goal_edit))
-            .route("/markers", post(handlers::marker_create))
+            .route("/goals/{id}/edit", get(handlers::edit_goal))
+            .route("/markers", post(handlers::add_marker))
             .route(
                 "/markers/{id}",
-                get(handlers::marker_cancel_edit)
-                    .put(handlers::marker_update)
-                    .delete(handlers::marker_delete),
+                get(handlers::show_marker)
+                    .put(handlers::update_marker)
+                    .delete(handlers::delete_marker),
             )
-            .route("/markers/{id}/edit", get(handlers::marker_edit))
+            .route("/markers/{id}/edit", get(handlers::edit_marker))
             .route("/export.csv", get(handlers::export))
             .route(
                 "/import",
@@ -132,7 +133,7 @@ impl Server {
                     .post(handlers::import)
                     .layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
             )
-            .route("/settings/delete-all", post(handlers::delete_all))
+            .route("/settings/delete-all", post(handlers::delete_everything))
             .fallback(homelab::http::not_found)
             .layer(from_fn_with_state(self.clone(), auth::authenticate))
             .layer(from_fn(auth::refuse_cross_origin))

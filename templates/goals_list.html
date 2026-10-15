@@ -4,7 +4,7 @@
 		<p class="empty">No goal set yet.</p>
 	{% else %}
 		<div class="entries">
-			{% for goal in goals %}{% include "goal_row.html" %}{% endfor %}
+			{% for row in goals %}{% include "goal_row.html" %}{% endfor %}
 		</div>
 	{% endif %}
 </section>

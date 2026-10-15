@@ -13,14 +13,14 @@
 	<main class="container">
 		<section class="card">
 			<h2>Import result</h2>
-			<p>Imported {{ inserted }} entries.</p>
+			<p>Imported {{ added }} entries.</p>
 			{% if duplicates > 0 %}<p>Skipped {{ duplicates }} already-imported duplicates.</p>{% endif %}
-			{% if invalid > 0 %}
-				<p>{{ invalid }} rows could not be parsed:</p>
+			{% if unreadable > 0 %}
+				<p>{{ unreadable }} rows could not be parsed:</p>
 				<ul>
-					{% for e in errors %}<li>line {{ e.line_number }}: {{ e.reason }}</li>{% endfor %}
+					{% for s in shown %}<li>line {{ s.line }}: {{ s.reason }}</li>{% endfor %}
 				</ul>
-				{% if truncated > 0 %}<p class="empty">...and {{ truncated }} more.</p>{% endif %}
+				{% if not_shown > 0 %}<p class="empty">...and {{ not_shown }} more.</p>{% endif %}
 			{% endif %}
 			<p><a class="btn-text" href="/">Back to Weight Tracker</a></p>
 		</section>

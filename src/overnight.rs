@@ -1,148 +1,88 @@
-//! The evening-to-morning weight change: the per-pair deltas, a summary over
-//! a range, and the fixed 7d/30d/90d/1y comparison on the Overnight tab.
-
-use std::collections::HashMap;
+//! The Overnight tab: how much weight goes between an evening weigh-in and
+//! the next morning's.
 
 use jiff::Zoned;
 use serde::Serialize;
 
-use crate::db::{self, Entry, Goal};
-use crate::timerange::{self, Window};
-use crate::{clock, goals, weight};
+use crate::model::{Entry, Goal, Grams, current_goal};
+use crate::timeline::Timeline;
+use crate::timerange::{Range, Window};
 
-/// One evening-to-morning pair: the adjacency
-/// [`weight::chronological_with_deltas`] establishes, with both sides kept
-/// for display.
-#[derive(Clone, Debug, Default)]
-pub struct Pair {
-    /// What identifies a pair in the tests; the page shows the labels.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub morning_id: i64,
-    /// Kept for windowing; not rendered directly.
-    pub morning_recorded_at: Option<Zoned>,
-    pub evening_label: String,
-    pub evening_weight_str: String,
-    pub morning_label: String,
-    pub morning_weight_str: String,
-    pub delta_g: i64,
-    pub delta_str: String,
-    pub is_loss: bool,
+/// One night: an evening reading and the next morning's.
+#[derive(Clone, Debug)]
+pub struct Night {
+    pub evening: Entry,
+    pub morning: Entry,
 }
 
-/// Walks `chrono` (ascending), pairing each morning that has an overnight
-/// delta with the evening immediately before it. Newest first, as the
-/// History list is.
-pub fn build_pairs(chrono: &[Entry], overnight: &HashMap<i64, i64>) -> Vec<Pair> {
-    let mut pairs = Vec::new();
-    let mut last_evening: Option<&Entry> = None;
-    for e in chrono {
-        match weight::entry_period(e) {
-            "morning" => {
-                if let (Some(&delta), Some(ev)) = (overnight.get(&e.id), last_evening) {
-                    pairs.push(Pair {
-                        morning_id: e.id,
-                        morning_recorded_at: Some(e.recorded_at.clone()),
-                        evening_label: clock::datetime_label(&ev.recorded_at),
-                        evening_weight_str: weight::format_kg(ev.weight_g),
-                        morning_label: clock::datetime_label(&e.recorded_at),
-                        morning_weight_str: weight::format_kg(e.weight_g),
-                        delta_g: delta,
-                        delta_str: weight::format_kg_delta(delta),
-                        is_loss: delta < 0,
-                    });
-                }
-            }
-            "evening" => last_evening = Some(e),
-            _ => {}
-        }
-    }
-    pairs.reverse();
-    pairs
-}
-
-/// The overnight deltas within a range, formatted for display.
-#[derive(Clone, Debug, Default)]
-pub struct Summary {
-    /// Set when there are no pairs in range.
-    pub empty: String,
-    pub count: usize,
-    /// The "Typical" figure.
-    pub avg_str: String,
-    pub avg_is_loss: bool,
-    /// The newest pair: how last night compared.
-    pub last_str: String,
-    pub last_is_loss: bool,
-    /// max(deltas): the smallest loss (or a gain) on record — "Safe", since
-    /// it is the worst case for making weight.
-    pub best_case_str: String,
-    pub best_case_is_loss: bool,
-    /// min(deltas): the largest loss on record.
-    pub worst_case_str: String,
-    pub worst_case_is_loss: bool,
-}
-
-pub fn build_summary(pairs: &[Pair]) -> Summary {
-    let Some(first) = pairs.first() else {
-        return Summary {
-            empty: "Not enough data yet — log an evening weigh-in followed by the next morning's to see overnight stats.".into(),
-            ..Default::default()
-        };
-    };
-    let sum: i64 = pairs.iter().map(|p| p.delta_g).sum();
-    let best = pairs.iter().map(|p| p.delta_g).max().unwrap_or_default();
-    let worst = pairs.iter().map(|p| p.delta_g).min().unwrap_or_default();
-    // Integer division, truncating toward zero as Go's does.
-    let avg = sum / pairs.len() as i64;
-    let last = first.delta_g; // newest first
-    Summary {
-        empty: String::new(),
-        count: pairs.len(),
-        avg_str: weight::format_kg_delta(avg),
-        avg_is_loss: avg < 0,
-        last_str: weight::format_kg_delta(last),
-        last_is_loss: last < 0,
-        best_case_str: weight::format_kg_delta(best),
-        best_case_is_loss: best < 0,
-        worst_case_str: weight::format_kg_delta(worst),
-        worst_case_is_loss: worst < 0,
+impl Night {
+    pub fn change(&self) -> Grams {
+        self.morning.weight - self.evening.weight
     }
 }
 
-/// Every pair from the full entry set, then filtered to `window` — deltas
-/// must be computed over everything first, or an evening just outside the
-/// window would starve the first visible morning of its partner.
-pub fn windowed_pairs(entries: &[Entry], window: &Window) -> Vec<Pair> {
-    let (chrono, overnight, _) = weight::chronological_with_deltas(entries);
-    build_pairs(&chrono, &overnight)
-        .into_iter()
-        .filter(|p| {
-            p.morning_recorded_at
-                .as_ref()
-                .is_some_and(|t| window.contains(t))
+/// The nights whose morning is inside `window`, newest first. Pairs are made
+/// across the whole timeline first, so the first morning in the window keeps
+/// an evening that falls just outside it.
+pub fn nights(timeline: &Timeline, window: &Window) -> Vec<Night> {
+    timeline
+        .nights()
+        .rev()
+        .filter(|(_, morning)| window.contains(&morning.recorded_at))
+        .map(|(evening, morning)| Night {
+            evening: evening.clone(),
+            morning: morning.clone(),
         })
         .collect()
 }
 
-/// The fixed trailing windows compared side by side — deliberately not
-/// governed by the range picker, since seeing the timescales together is the
-/// point. Shortest to longest, which lets [`build_window_chart`] drop a
-/// window covering no more nights than the one before.
-const WINDOW_SPANS: [(&str, &str, &str); 4] = [
-    // (axis label, tooltip name, range)
-    ("7d", "7 days", "7"),
-    ("30d", "30 days", "30"),
-    ("90d", "90 days", "90"),
-    ("1y", "1 year", "365"),
+/// The figures over a set of nights.
+#[derive(Clone, Debug)]
+pub struct Stats {
+    pub count: usize,
+    pub last: Grams,
+    /// The mean, truncated to the gram.
+    pub typical: Grams,
+    /// The smallest loss, or a gain: the night to plan for when the weight
+    /// has to be made.
+    pub safest: Grams,
+    /// The largest loss.
+    pub biggest_loss: Grams,
+}
+
+/// None for no nights at all. `nights` is newest first.
+pub fn stats(nights: &[Night]) -> Option<Stats> {
+    let changes: Vec<Grams> = nights.iter().map(Night::change).collect();
+    Some(Stats {
+        count: changes.len(),
+        last: *changes.first()?,
+        typical: mean(&changes)?,
+        safest: *changes.iter().max()?,
+        biggest_loss: *changes.iter().min()?,
+    })
+}
+
+fn mean(changes: &[Grams]) -> Option<Grams> {
+    let n = i64::try_from(changes.len()).ok().filter(|&n| n > 0)?;
+    Some(Grams(changes.iter().copied().sum::<Grams>().0 / n))
+}
+
+/// The timescales compared side by side in the calculator — fixed, and not
+/// governed by the range filter, because comparing them is the point.
+const TIMESCALES: [(&str, &str, i64); 4] = [
+    ("7d", "7 days", 7),
+    ("30d", "30 days", 30),
+    ("90d", "90 days", 90),
+    ("1y", "1 year", 365),
 ];
 
-/// One window's column. Min and Max are the actual smallest and largest
-/// deltas, and are what the column spans; Mean and the ±1 sample-SD Low and
-/// High place the gradient's midpoint and fill the tooltip. HasRange is
-/// false below two pairs, since a standard deviation needs two samples —
-/// Low/High (and Min/Max) then collapse onto Mean.
+/// One timescale's column, as chart-app.js reads it. The column spans the
+/// smallest and largest change; the mean and ±1 sample standard deviation
+/// place its midpoint and fill the tooltip. With a single night there is no
+/// spread, and every figure is the mean.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WindowPoint {
+pub struct Column {
     pub label: &'static str,
     pub name: &'static str,
     pub count: usize,
@@ -155,94 +95,77 @@ pub struct WindowPoint {
     pub max_kg: f64,
 }
 
+/// The /overnight/windows response.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WindowChart {
+pub struct Timescales {
     pub has_data: bool,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub empty: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub empty: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub points: Vec<WindowPoint>,
-    /// The active goal, so the client's "tonight's weight" calculator can
-    /// judge a projected morning range against it without another request.
+    pub points: Vec<Column>,
+    /// The goal in effect, so the "tonight's weight" calculator can judge a
+    /// projected morning against it.
     pub has_goal: bool,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub goal_kg: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_kg: Option<f64>,
 }
 
-fn is_zero(v: &f64) -> bool {
-    *v == 0.0
-}
-
-/// The sample standard deviation (n-1) of `deltas` around `mean_g`; None
-/// below two values.
-fn sample_std_dev(deltas: &[i64], mean_g: f64) -> Option<f64> {
-    if deltas.len() < 2 {
-        return None;
-    }
-    let sum_sq: f64 = deltas.iter().map(|&d| (d as f64 - mean_g).powi(2)).sum();
-    Some((sum_sq / (deltas.len() - 1) as f64).sqrt())
-}
-
-pub fn build_window_chart(entries: &[Entry], all_goals: &[Goal], now: &Zoned) -> WindowChart {
-    let mut points = Vec::new();
-    let mut any_data = false;
-    // The count of the last window kept, so each is compared with what is on
-    // the chart: with ten days logged, 90d is dropped for matching 30d, and
-    // 1y is then compared with 30d too.
-    let mut last_count = None;
-    for (label, name, range) in WINDOW_SPANS {
-        let pairs = windowed_pairs(entries, &timerange::resolve(range, "", "", now));
-        // The same nights as the previous window would be the same column,
-        // inviting the reader to find a difference that is not there.
-        if last_count == Some(pairs.len()) {
+pub fn timescales(timeline: &Timeline, goals: &[Goal], now: &Zoned) -> Timescales {
+    let mut columns: Vec<Column> = Vec::new();
+    for (label, name, days) in TIMESCALES {
+        let nights = nights(timeline, &Range::Days(days).window(now));
+        // A timescale holding the same nights as the last one shown would be
+        // the same column again.
+        if columns.last().is_some_and(|c| c.count == nights.len()) {
             continue;
         }
-        last_count = Some(pairs.len());
-
-        let mut point = WindowPoint {
+        let mut column = Column {
             label,
             name,
-            count: pairs.len(),
+            count: nights.len(),
             ..Default::default()
         };
-        if !pairs.is_empty() {
-            any_data = true;
-            let deltas: Vec<i64> = pairs.iter().map(|p| p.delta_g).collect();
-            let mean_g = deltas.iter().sum::<i64>() / deltas.len() as i64;
-            point.mean_kg = db::grams_to_kg(mean_g);
-            point.mean_label = weight::format_kg_delta(mean_g);
-            point.min_kg = db::grams_to_kg(*deltas.iter().min().expect("non-empty"));
-            point.max_kg = db::grams_to_kg(*deltas.iter().max().expect("non-empty"));
-            if let Some(sd) = sample_std_dev(&deltas, mean_g as f64) {
-                let sd = sd.round() as i64;
-                point.has_range = true;
-                point.low_kg = db::grams_to_kg(mean_g - sd);
-                point.high_kg = db::grams_to_kg(mean_g + sd);
-            } else {
-                point.low_kg = point.mean_kg;
-                point.high_kg = point.mean_kg;
-            }
+        let changes: Vec<Grams> = nights.iter().map(Night::change).collect();
+        if let Some(mean) = mean(&changes) {
+            column.mean_kg = mean.kg();
+            column.mean_label = mean.delta().to_string();
+            column.min_kg = changes.iter().min().map_or(0.0, |g| g.kg());
+            column.max_kg = changes.iter().max().map_or(0.0, |g| g.kg());
+            let sd = sample_sd(&changes, mean).map(|sd| Grams(sd.round() as i64));
+            column.has_range = sd.is_some();
+            let sd = sd.unwrap_or_default();
+            column.low_kg = Grams(mean.0 - sd.0).kg();
+            column.high_kg = Grams(mean.0 + sd.0).kg();
         }
-        points.push(point);
+        columns.push(column);
     }
 
-    if !any_data {
-        return WindowChart {
-            empty: "Not enough data yet — log some overnight pairs to see how the range compares across timescales.".into(),
+    if columns.iter().all(|c| c.count == 0) {
+        return Timescales {
+            empty: Some(
+                "Not enough data yet — log some overnight pairs to see how the range compares across timescales.",
+            ),
             ..Default::default()
         };
     }
-    let mut chart = WindowChart {
+    let goal = current_goal(goals, now);
+    Timescales {
         has_data: true,
-        points,
-        ..Default::default()
-    };
-    if let Some(goal) = goals::current(all_goals, now) {
-        chart.has_goal = true;
-        chart.goal_kg = db::grams_to_kg(goal.weight_g);
+        empty: None,
+        points: columns,
+        has_goal: goal.is_some(),
+        goal_kg: goal.map(|g| g.weight.kg()),
     }
-    chart
+}
+
+/// The sample standard deviation (n − 1) in grams, for two or more values.
+fn sample_sd(changes: &[Grams], mean: Grams) -> Option<f64> {
+    if changes.len() < 2 {
+        return None;
+    }
+    let squares: f64 = changes.iter().map(|g| (g.0 - mean.0).pow(2) as f64).sum();
+    Some((squares / (changes.len() - 1) as f64).sqrt())
 }
 
 #[cfg(test)]
@@ -250,221 +173,175 @@ mod tests {
     use super::*;
     use crate::testsupport::{at, entry, goal};
 
-    fn pairs_of(entries: &[Entry]) -> Vec<Pair> {
-        let (chrono, overnight, _) = weight::chronological_with_deltas(entries);
-        build_pairs(&chrono, &overnight)
+    fn all(entries: &[Entry]) -> Vec<Night> {
+        nights(&Timeline::new(entries), &Window::default())
     }
 
     #[test]
-    fn build_pairs_cases() {
-        let pairs = pairs_of(&[
-            entry(1, at("2026-08-14 20:00"), 84.0, ""),
-            entry(2, at("2026-08-15 07:00"), 82.5, ""),
+    fn nights_need_both_ends() {
+        let got = all(&[
+            entry(1, "2026-08-14 20:00", 84.0),
+            entry(2, "2026-08-15 07:00", 82.5),
         ]);
-        assert_eq!(pairs.len(), 1);
-        let p = &pairs[0];
-        assert_eq!(p.morning_id, 2);
+        assert_eq!(got.len(), 1);
         assert_eq!(
-            (p.evening_weight_str.as_str(), p.morning_weight_str.as_str()),
-            ("84.0", "82.5")
+            (got[0].evening.id, got[0].morning.id, got[0].change()),
+            (1, 2, Grams(-1500))
         );
-        assert_eq!(p.delta_str, "-1.5 kg");
-        assert!(p.is_loss);
-
         assert!(
-            pairs_of(&[
-                entry(1, at("2026-08-10 20:00"), 84.0, ""),
-                entry(2, at("2026-08-14 07:00"), 82.5, ""),
+            all(&[
+                entry(1, "2026-08-10 20:00", 84.0),
+                entry(2, "2026-08-14 07:00", 82.5)
             ])
             .is_empty()
         );
-        assert!(pairs_of(&[entry(1, at("2026-08-15 07:00"), 82.5, "")]).is_empty());
+        assert!(all(&[entry(1, "2026-08-15 07:00", 82.5)]).is_empty());
 
-        let pairs = pairs_of(&[
-            entry(1, at("2026-08-14 20:00"), 84.0, ""),
-            entry(2, at("2026-08-15 07:00"), 82.5, ""),
-            entry(3, at("2026-08-17 20:00"), 85.0, ""),
-            entry(4, at("2026-08-18 07:00"), 83.9, ""),
+        let got = all(&[
+            entry(1, "2026-08-14 20:00", 84.0),
+            entry(2, "2026-08-15 07:00", 82.5),
+            entry(3, "2026-08-17 20:00", 85.0),
+            entry(4, "2026-08-18 07:00", 83.9),
         ]);
         assert_eq!(
-            pairs.iter().map(|p| p.morning_id).collect::<Vec<_>>(),
-            [4, 2]
+            got.iter().map(|n| n.morning.id).collect::<Vec<_>>(),
+            [4, 2],
+            "newest first"
         );
     }
 
-    fn pair(id: i64, delta: i64) -> Pair {
-        Pair {
-            morning_id: id,
-            delta_g: delta,
-            is_loss: delta < 0,
-            ..Default::default()
-        }
+    #[test]
+    fn a_window_keeps_an_evening_just_outside_it() {
+        let t = Timeline::new(&[
+            entry(1, "2026-08-14 20:00", 84.0),
+            entry(2, "2026-08-15 07:00", 82.5),
+        ]);
+        let from = |s| Window {
+            from: Some(at(s)),
+            until: None,
+        };
+        assert_eq!(nights(&t, &from("2026-08-15 00:00")).len(), 1);
+        assert!(nights(&t, &from("2026-08-16 00:00")).is_empty());
     }
 
     #[test]
-    fn build_summary_cases() {
-        assert!(!build_summary(&[]).empty.is_empty());
-
-        let got = build_summary(&[pair(3, -1100), pair(2, -1500)]);
+    fn stats_over_nights() {
+        assert!(stats(&[]).is_none());
+        let got = stats(&all(&[
+            entry(1, "2026-08-14 20:00", 84.0),
+            entry(2, "2026-08-15 07:00", 82.5), // -1.5
+            entry(3, "2026-08-15 20:00", 84.0),
+            entry(4, "2026-08-16 07:00", 82.9), // -1.1, the latest
+        ]))
+        .unwrap();
         assert_eq!(got.count, 2);
-        assert_eq!((got.avg_str.as_str(), got.avg_is_loss), ("-1.3 kg", true));
-        assert_eq!((got.last_str.as_str(), got.last_is_loss), ("-1.1 kg", true));
         assert_eq!(
-            (got.best_case_str.as_str(), got.best_case_is_loss),
-            ("-1.1 kg", true)
-        );
-        assert_eq!(
-            (got.worst_case_str.as_str(), got.worst_case_is_loss),
-            ("-1.5 kg", true)
-        );
-
-        let got = build_summary(&[pair(1, 200)]);
-        assert!(
-            !(got.avg_is_loss
-                || got.best_case_is_loss
-                || got.worst_case_is_loss
-                || got.last_is_loss)
+            (got.last, got.typical, got.safest, got.biggest_loss),
+            (Grams(-1100), Grams(-1300), Grams(-1100), Grams(-1500))
         );
     }
 
     #[test]
-    fn windowed_pairs_cases() {
-        let entries = [
-            entry(1, at("2026-08-14 20:00"), 84.0, ""),
-            entry(2, at("2026-08-15 07:00"), 82.5, ""),
-        ];
-        // The morning keeps its delta though its evening is out of window.
-        let w = Window {
-            from: Some(at("2026-08-15 00:00")),
-            until: None,
-        };
-        let pairs = windowed_pairs(&entries, &w);
-        assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].delta_str, "-1.5 kg");
-        let w = Window {
-            from: Some(at("2026-08-16 00:00")),
-            until: None,
-        };
-        assert!(windowed_pairs(&entries, &w).is_empty());
-        assert_eq!(windowed_pairs(&entries, &Window::default()).len(), 1);
+    fn sample_standard_deviation() {
+        let g = |v: &[i64]| v.iter().map(|&x| Grams(x)).collect::<Vec<_>>();
+        assert!(sample_sd(&g(&[]), Grams(0)).is_none());
+        assert!(sample_sd(&g(&[-1500]), Grams(-1500)).is_none());
+        // By hand: about 251.66 g.
+        let sd = sample_sd(&g(&[-1000, -1500, -1300]), Grams(-1266)).unwrap();
+        assert!((sd - 251.66).abs() < 0.5, "{sd}");
     }
 
     #[test]
-    fn sample_std_dev_cases() {
-        assert!(sample_std_dev(&[], 0.0).is_none());
-        assert!(sample_std_dev(&[-1500], -1500.0).is_none());
-        // Computed by hand: ~251.66 g.
-        let got = sample_std_dev(&[-1000, -1500, -1300], -1266.6666666666667).unwrap();
-        assert!((got - 251.66).abs() < 0.5, "{got}");
-    }
-
-    #[test]
-    fn build_window_chart_cases() {
+    fn timescale_columns() {
         let now = at("2026-08-20 12:00");
-        let got = build_window_chart(&[], &[], &now);
-        assert!(!got.has_data && !got.empty.is_empty());
+        let got = timescales(&Timeline::default(), &[], &now);
+        assert!(!got.has_data && got.empty.is_some());
 
-        let one = [
-            entry(1, at("2026-08-19 20:00"), 84.0, ""),
-            entry(2, at("2026-08-20 07:00"), 82.5, ""),
-        ];
-        let got = build_window_chart(&one, &[], &now);
-        assert!(got.has_data);
-        let p = &got.points[0];
-        assert_eq!((p.label, p.count, p.has_range), ("7d", 1, false));
-        assert_eq!(
-            (p.low_kg, p.high_kg, p.min_kg, p.max_kg),
-            (p.mean_kg, p.mean_kg, p.mean_kg, p.mean_kg)
-        );
+        let one = Timeline::new(&[
+            entry(1, "2026-08-19 20:00", 84.0),
+            entry(2, "2026-08-20 07:00", 82.5),
+        ]);
+        let got = timescales(&one, &[], &now);
+        let c = &got.points[0];
+        assert_eq!((c.label, c.count, c.has_range), ("7d", 1, false));
+        assert_eq!([c.low_kg, c.high_kg, c.min_kg, c.max_kg], [c.mean_kg; 4]);
         assert!(!got.has_goal);
+        let got = timescales(&one, &[goal(1, 80.0, "2026-01-01")], &now);
+        assert_eq!((got.has_goal, got.goal_kg), (true, Some(80.0)));
 
-        let got = build_window_chart(&one, &[goal(1, 80.0, "2026-01-01")], &now);
-        assert!(got.has_goal);
-        assert_eq!(got.goal_kg, 80.0);
-
-        let entries = [
-            entry(1, at("2026-08-18 20:00"), 84.0, ""), // -1.5
-            entry(2, at("2026-08-19 07:00"), 82.5, ""),
-            entry(3, at("2026-07-25 20:00"), 84.0, ""), // -3.0
-            entry(4, at("2026-07-26 07:00"), 81.0, ""),
-            entry(5, at("2026-06-01 20:00"), 84.0, ""), // +0.5
-            entry(6, at("2026-06-02 07:00"), 84.5, ""),
-        ];
-        let got = build_window_chart(&entries, &[], &now);
-        let count = |l| got.points.iter().find(|p| p.label == l).map(|p| p.count);
+        let three = Timeline::new(&[
+            entry(1, "2026-08-18 20:00", 84.0), // -1.5
+            entry(2, "2026-08-19 07:00", 82.5),
+            entry(3, "2026-07-25 20:00", 84.0), // -3.0
+            entry(4, "2026-07-26 07:00", 81.0),
+            entry(5, "2026-06-01 20:00", 84.0), // +0.5
+            entry(6, "2026-06-02 07:00", 84.5),
+        ]);
+        let got = timescales(&three, &[], &now);
+        let counts: Vec<_> = got.points.iter().map(|c| (c.label, c.count)).collect();
         assert_eq!(
-            (count("7d"), count("30d"), count("90d")),
-            (Some(1), Some(2), Some(3))
+            counts,
+            [("7d", 1), ("30d", 2), ("90d", 3)],
+            "1y repeats 90d"
         );
-        let ninety = got.points.iter().find(|p| p.label == "90d").unwrap();
-        assert_eq!((ninety.min_kg, ninety.max_kg), (-3.0, 0.5));
+        assert_eq!((got.points[2].min_kg, got.points[2].max_kg), (-3.0, 0.5));
+        assert!(got.points.iter().all(|c| !c.name.is_empty()));
     }
 
-    // A timescale is only offered when it covers more nights than the one
-    // before: 90d over ten days of history would be the 30d column again.
+    // A timescale is only shown when it covers more nights than the one
+    // before.
     #[test]
-    fn build_window_chart_drops_windows_matching_the_one_before() {
+    fn repeated_timescales_are_dropped() {
         let now = at("2026-08-22 12:00");
-        let nights = |n: i64| {
+        let history = |days: i64| {
             let mut entries = Vec::new();
-            let mut id = 0;
-            for d in (1..=n).rev() {
-                let evening = clock::add_date(&now, 0, 0, -d);
-                let morning = clock::add_date(&evening, 0, 0, 1);
-                let on = |t: &Zoned, h| {
-                    clock::date(
-                        t.year().into(),
-                        t.month().into(),
-                        t.day().into(),
-                        h,
-                        0,
-                        0,
-                        0,
-                        t.time_zone(),
-                    )
-                };
-                id += 1;
-                entries.push(entry(id, on(&evening, 21), 84.0, ""));
-                id += 1;
-                entries.push(entry(id, on(&morning, 7), 83.0, ""));
+            for d in (1..=days).rev() {
+                let evening = now.checked_sub(jiff::Span::new().days(d)).unwrap();
+                let morning = evening.tomorrow().unwrap();
+                let at = |t: &Zoned, h: i8| t.with().hour(h).minute(0).build().unwrap();
+                let id = entries.len() as i64;
+                entries.push(Entry {
+                    id,
+                    recorded_at: at(&evening, 21),
+                    weight: Grams(84000),
+                    period_override: None,
+                });
+                entries.push(Entry {
+                    id: id + 1,
+                    recorded_at: at(&morning, 7),
+                    weight: Grams(83000),
+                    period_override: None,
+                });
             }
-            entries
+            Timeline::new(&entries)
         };
         for (days, want) in [
             (3, vec!["7d"]),
             (10, vec!["7d", "30d"]),
             (45, vec!["7d", "30d", "90d"]),
-            (120, vec!["7d", "30d", "90d", "1y"]),
             (400, vec!["7d", "30d", "90d", "1y"]),
         ] {
-            let got: Vec<&str> = build_window_chart(&nights(days), &[], &now)
+            let got: Vec<_> = timescales(&history(days), &[], &now)
                 .points
                 .iter()
-                .map(|p| p.label)
+                .map(|c| c.label)
                 .collect();
             assert_eq!(got, want, "{days} nights");
         }
     }
 
+    // The field names chart-app.js reads.
     #[test]
-    fn every_window_has_a_name() {
-        let entries = [
-            entry(1, at("2026-08-20 21:00"), 84.0, ""),
-            entry(2, at("2026-08-21 07:00"), 83.0, ""),
-        ];
-        for p in build_window_chart(&entries, &[], &at("2026-08-22 12:00")).points {
-            assert!(!p.name.is_empty(), "{}", p.label);
-        }
-    }
-
-    // The JSON field names are what chart-app.js reads.
-    #[test]
-    fn window_chart_json_shape() {
-        let got =
-            serde_json::to_value(build_window_chart(&[], &[], &at("2026-08-20 12:00"))).unwrap();
-        assert_eq!(got["hasData"], false);
-        assert!(got.get("points").is_none() && got.get("goalKg").is_none());
-        let p = serde_json::to_value(WindowPoint::default()).unwrap();
+    fn json_shape() {
+        let empty = serde_json::to_value(timescales(
+            &Timeline::default(),
+            &[],
+            &at("2026-08-20 12:00"),
+        ))
+        .unwrap();
+        assert_eq!(empty["hasData"], false);
+        assert!(empty.get("points").is_none() && empty.get("goalKg").is_none());
+        let column = serde_json::to_value(Column::default()).unwrap();
         for key in [
             "label",
             "name",
@@ -477,7 +354,7 @@ mod tests {
             "minKg",
             "maxKg",
         ] {
-            assert!(p.get(key).is_some(), "{key}");
+            assert!(column.get(key).is_some(), "{key}");
         }
     }
 }

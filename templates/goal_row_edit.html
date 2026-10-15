@@ -1,10 +1,10 @@
-<div class="entry-row entry-row-editing" id="goal-{{ goal.id }}">
-	<form class="edit-form" hx-put="/goals/{{ goal.id }}" hx-target="#goals-list" hx-swap="outerHTML">
+<div class="entry-row entry-row-editing" id="goal-{{ row.goal.id }}">
+	<form class="edit-form" hx-put="/goals/{{ row.goal.id }}" hx-target="#goals-list" hx-swap="outerHTML">
 		{#- step="any" for the same reason as the entry edit form: the stored
 		    value may have finer precision than 0.1 kg. #}
-		<input type="number" step="any" min="0" name="weight_kg" value="{{ goal.weight_kg_raw }}" required>
-		<input type="date" name="effective_from" value="{{ goal.effective_from_date }}" required>
+		<input type="number" step="any" min="0" name="weight_kg" value="{{ row.goal.weight.input() }}" required>
+		<input type="date" name="effective_from" value="{{ row.goal.effective_from.ymd() }}" required>
 		<button type="submit" class="btn btn-primary btn-small">Save</button>
-		<button type="button" class="btn-text btn-small" hx-get="/goals/{{ goal.id }}" hx-target="#goal-{{ goal.id }}" hx-swap="outerHTML">Cancel</button>
+		<button type="button" class="btn-text btn-small" hx-get="/goals/{{ row.goal.id }}" hx-target="#goal-{{ row.goal.id }}" hx-swap="outerHTML">Cancel</button>
 	</form>
 </div>
