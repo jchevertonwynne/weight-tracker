@@ -6,9 +6,8 @@ publish = false
 
 [dependencies]
 # Logging, traces, metrics, serving, the Access allowlist and the heap
-# profile, shaped as the Go apps shaped them so the dashboards read this the
-# same.
-homelab = { git = "https://github.com/jchevertonwynne/homelab-rs", tag = "v0.3.0" }
+# profile, named as the homelab dashboards read them.
+homelab = { git = "https://github.com/jchevertonwynne/homelab-rs", tag = "v0.4.0" }
 axum = { version = "0.8", default-features = false, features = ["http1", "matched-path", "multipart", "query", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
 # The pool, and through it rusqlite, bundled: the SQLite is the one this build
@@ -34,6 +33,7 @@ tempfile = "3"
 opentelemetry = "0.33"
 tracing = "0.1"
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 
 [build-dependencies]
 memory-serve = { version = "2", features = ["force-embed"] }

@@ -20,6 +20,7 @@ use homelab::access::Allowlist;
 use jiff::Zoned;
 
 use crate::db::Db;
+use error::Error;
 
 /// The clock, injected so tests can pin it; production passes
 /// [`Zoned::now`].
@@ -82,7 +83,7 @@ impl Server {
             // /static/ is outside authenticate, so a miss is a plain 404
             // here rather than falling through to the app router, which
             // would ask who is calling.
-            .fallback(|| async { homelab::http::plain_not_found() });
+            .fallback(|| async { Error::NotFound });
         let outer = Router::new()
             .route("/healthz", get(healthz))
             .route("/metrics", get(homelab::metrics::handler))
@@ -134,7 +135,7 @@ impl Server {
                     .layer(DefaultBodyLimit::max(MAX_IMPORT_BYTES)),
             )
             .route("/settings/delete-all", post(handlers::delete_everything))
-            .fallback(homelab::http::not_found)
+            .fallback(|| async { Error::NotFound })
             .layer(from_fn_with_state(self.clone(), auth::authenticate))
             .layer(from_fn(auth::refuse_cross_origin))
             .with_state(self.clone());
@@ -154,7 +155,7 @@ async fn healthz() -> Response {
             (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        "ok\n",
+        "ok",
     )
         .into_response()
 }

@@ -172,7 +172,7 @@ async fn unknown_path_is_still_authenticated() {
 async fn no_header_is_refused() {
     let res = server().ask("/", "").await;
     assert_eq!(res.status, 403);
-    assert_eq!(res.text(), "not authenticated\n");
+    assert_eq!(res.text(), "not authenticated");
 }
 
 #[tokio::test]
@@ -755,7 +755,7 @@ async fn service_worker() {
 #[tokio::test]
 async fn healthz() {
     let res = server().ask("/healthz", "").await;
-    assert_eq!((res.status.as_u16(), res.text().as_str()), (200, "ok\n"));
+    assert_eq!((res.status.as_u16(), res.text().as_str()), (200, "ok"));
 }
 
 // Without a validator browsers applied heuristic freshness and kept the old
@@ -798,19 +798,19 @@ async fn static_assets_are_revalidatable() {
     }
 }
 
-// Request spans are named as otelhttp named them, and the metrics label each
-// request by the app route it was for.
+// The metrics label each request by the method and the app route it was
+// for, and a request no route matched as unmatched.
 #[tokio::test]
-async fn metrics_label_routes_as_the_go_version_did() {
+async fn metrics_label_each_route() {
     let t = server();
     t.ask("/", ALLOWED).await;
     t.ask("/entries/999/edit", ALLOWED).await;
     t.ask("/nope", ALLOWED).await;
     let body = t.ask("/metrics", "").await.text();
     for series in [
-        r#"http_request_duration_seconds_count{method="GET",route="GET /{$}",status="200"}"#,
+        r#"http_request_duration_seconds_count{method="GET",route="GET /",status="200"}"#,
         r#"http_request_duration_seconds_count{method="GET",route="GET /entries/{id}/edit",status="404"}"#,
-        r#"http_request_duration_seconds_count{method="GET",route="/",status="404"}"#,
+        r#"http_request_duration_seconds_count{method="GET",route="unmatched",status="404"}"#,
     ] {
         assert!(body.contains(series), "missing {series}");
     }

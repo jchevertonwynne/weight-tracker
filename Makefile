@@ -1,4 +1,4 @@
-ADDR ?= :8080
+ADDR ?= 0.0.0.0:8080
 DB ?= weight-tracker.db
 # There is no Cloudflare Access in front of a local server, so every request
 # arrives with no identity header and would be refused. DEV_USER supplies one.
@@ -26,7 +26,7 @@ help:
 	@echo "make clean      - remove build output and the local dev database"
 
 run:
-	TZ=$(TZ) cargo run -- -addr $(ADDR) -db $(DB) -dev-user $(DEV_USER) -allowed-emails '$(ALLOWED)'
+	TZ=$(TZ) cargo run -- --addr $(ADDR) --db $(DB) --dev-user $(DEV_USER) --allowed-emails '$(ALLOWED)'
 
 build:
 	cargo build --release

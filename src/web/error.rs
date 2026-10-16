@@ -32,7 +32,7 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         match self {
             Error::BadRequest(msg) => homelab::http::error(StatusCode::BAD_REQUEST, &msg),
-            Error::NotFound => homelab::http::plain_not_found(),
+            Error::NotFound => homelab::http::error(StatusCode::NOT_FOUND, "not found"),
             Error::Internal(err) => {
                 tracing::error!(error = format!("{err:#}"), "request failed");
                 homelab::http::error(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
