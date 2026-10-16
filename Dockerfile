@@ -86,4 +86,4 @@ COPY --from=build /weight-tracker /weight-tracker
 USER 65532:65532
 EXPOSE 8090
 ENTRYPOINT ["/weight-tracker"]
-CMD ["-addr", ":8090", "-db", "/var/lib/weight-tracker/weight-tracker.db"]
+CMD ["--addr", "0.0.0.0:8090", "--db", "/var/lib/weight-tracker/weight-tracker.db"]

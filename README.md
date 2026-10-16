@@ -3,8 +3,8 @@
 A tiny self-hosted weight tracker for morning/evening weigh-ins, built to run on a Raspberry Pi.
 
 - Rust and axum, on [homelab-rs](https://github.com/jchevertonwynne/homelab-rs)
-  for its logs, traces, metrics, heap profile and Access allowlist — which
-  keep the shape the Go version's had, so the dashboards read it unchanged
+  for its logs, traces, metrics, heap profile and Access allowlist, in the
+  shape the homelab dashboards read
 - htmx for interactivity, no JS build step
 - Hand-rolled Material-inspired CSS
 - SQLite, bundled through rusqlite; askama templates and the static assets
@@ -24,9 +24,9 @@ overnight delta versus the most recent evening entry.
 make run
 ```
 
-Then open http://localhost:8080. `make run` passes `-dev-user`, which stands in
+Then open http://localhost:8080. `make run` passes `--dev-user`, which stands in
 for the Cloudflare Access identity a local server never gets; without it, or an
-`-allowed-emails` list, the app refuses to start (see Deployment).
+`--allowed-emails` list, the app refuses to start (see Deployment).
 
 ## Deployment
 
@@ -47,14 +47,13 @@ binary carries the zone database (homelab-rs bundles it, so it resolves on a
 scratch image), `TZ` is what chooses the zone. Without it the pod runs in UTC
 and the split shifts by up to an hour, silently. Where a zone repeats an hour,
 as at 01:30 when the clocks go back, a weigh-in is read as the later of the
-two, as the Go version read it; `make check` runs the tests under four zones,
-as CI does.
+two; `make check` runs the tests under four zones, as CI does.
 
 `weight.jchevertonwynne.uk` is served through a Cloudflare tunnel and sits
 behind Cloudflare Access with an email allowlist, enforced at Cloudflare's
 edge, per hostname. The app checks that allowlist a second time, against the
 `Cf-Access-Authenticated-User-Email` header Access adds and a copy of the list
-in `-allowed-emails`, fed by a ConfigMap the homelab repo generates from the
+in `--allowed-emails`, fed by a ConfigMap the homelab repo generates from the
 policy file. That is not belt-and-braces: Access consults its policy only when
 it issues a session, so someone removed from the policy keeps a working session
 for up to a month, and this is what ends it — when the pod restarts onto the
@@ -66,12 +65,12 @@ Everything is behind that check except `/healthz`, `/metrics`, `/static/`,
 `/sw.js` and `/backup.db`, each named in `routes` in `main.go` with its reason.
 `/backup.db` is only half an exception: a caller with an Access identity is held
 to the allowlist like anywhere else, and one without needs the bearer token in
-`-backup-token-file`, which only the in-cluster backup job holds. Without that
+`--backup-token-file`, which only the in-cluster backup job holds. Without that
 token, a request with no identity is refused there too.
 There is still no login, no accounts and no per-user data: everyone the
 allowlist admits sees and edits the same entries.
 
-Locally there is no Access at all, so `make run` passes `-dev-user`, which
+Locally there is no Access at all, so `make run` passes `--dev-user`, which
 stands in for the header and is admitted whether or not it is on the list.
 
 ## Backups

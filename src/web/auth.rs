@@ -40,7 +40,7 @@ fn refusal(s: &Server, headers: &HeaderMap) -> Option<Response> {
     let Some(email) = access::email(headers, s.allow.dev_user()) else {
         tracing::error!(
             header = access::EMAIL_HEADER,
-            "no Access header and no -dev-user configured"
+            "no Access header and no --dev-user configured"
         );
         return Some(homelab::http::error(
             StatusCode::FORBIDDEN,
