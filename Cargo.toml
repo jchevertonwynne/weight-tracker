@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 # Logging, traces, metrics, serving, the Access allowlist and the heap
 # profile, named as the homelab dashboards read them.
-homelab = { git = "https://github.com/jchevertonwynne/homelab-rs", tag = "v0.4.0" }
+homelab = { git = "https://github.com/jchevertonwynne/homelab-rs", tag = "v0.4.1" }
 axum = { version = "0.8", default-features = false, features = ["http1", "matched-path", "multipart", "query", "tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
 # The pool, and through it rusqlite, bundled: the SQLite is the one this build
