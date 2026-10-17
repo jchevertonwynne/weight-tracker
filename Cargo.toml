@@ -14,6 +14,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] 
 # was tested against, and there is no base image to carry one — FROM scratch.
 r2d2 = "0.8"
 r2d2_sqlite = { version = "0.35", features = ["bundled"] }
+# The schema steps, versioned by PRAGMA user_version.
+rusqlite_migration = "2.6"
 askama = "0.16"
 # Embedded static files, served with ETags. build.rs loads them at compile
 # time.
