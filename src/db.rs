@@ -17,10 +17,13 @@ use r2d2_sqlite::rusqlite::types::{
     FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef,
 };
 use r2d2_sqlite::rusqlite::{self, Connection, OptionalExtension as _, Row, params};
+use rusqlite_migration::{M, Migrations};
 
 use crate::clock;
 use crate::model::{Entry, Goal, Grams, Marker, Period};
 
+/// Version 1 of the schema. `IF NOT EXISTS` because [`adopt_unversioned`]
+/// also runs it, over files that already have some of it.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS entries (
 	id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,9 +314,29 @@ fn configure(c: &mut Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Brings any older database up to the current schema. Each step checks
-/// before it acts, so running it again changes nothing.
+/// The schema, one step per user_version: a file at version n has had the
+/// first n applied. Never edit a step that has shipped; add a new one.
+fn migrations() -> Migrations<'static> {
+    Migrations::new(vec![M::up(SCHEMA)])
+}
+
+/// Brings any database up to the current schema. A file that is ahead of
+/// this build — an image rolled back past a schema change — is refused
+/// rather than served by code that does not know its shape.
 fn migrate(c: &mut Connection) -> Result<()> {
+    let version: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version == 0 && has_table(c, "entries")? {
+        adopt_unversioned(c).context("adopt unversioned database")?;
+    }
+    migrations().to_latest(c).context("migrate")
+}
+
+/// Files from before the schema was versioned are all at user_version 0,
+/// in one of three shapes: weights in kilograms with or without
+/// period_override, or the version 1 schema itself. Each step here checks
+/// before it acts, so whichever shape it finds ends up as version 1, and a
+/// run interrupted partway is finished by the next.
+fn adopt_unversioned(c: &mut Connection) -> Result<()> {
     c.execute_batch(SCHEMA).context("apply schema")?;
     // Before the grams rebuild, which copies the column across.
     if !has_column(c, "entries", "period_override")? {
@@ -326,7 +349,8 @@ fn migrate(c: &mut Connection) -> Result<()> {
                 .with_context(|| format!("convert {} to grams", table.name))?;
         }
     }
-    Ok(())
+    c.execute_batch("PRAGMA user_version = 1")
+        .context("set schema version")
 }
 
 /// A table that once stored weight as REAL kilograms, and the shape it is
@@ -381,6 +405,16 @@ fn rebuild_in_grams(c: &mut Connection, table: &KilogramTable) -> Result<()> {
     tx.execute(table.index, [])?;
     tx.commit()?;
     Ok(())
+}
+
+fn has_table(c: &Connection, table: &str) -> Result<bool> {
+    Ok(c.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()?
+    .is_some())
 }
 
 fn has_column(c: &Connection, table: &str, column: &str) -> Result<bool> {
@@ -829,6 +863,50 @@ mod tests {
                 .unwrap();
             assert!(found.is_some(), "{index}");
         }
+    }
+
+    fn user_version(path: &Path) -> i64 {
+        Connection::open(path)
+            .unwrap()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn migrations_are_valid() {
+        migrations().validate().unwrap();
+    }
+
+    #[test]
+    fn a_new_file_is_at_the_latest_version() {
+        let (f, _db) = open();
+        assert_eq!(user_version(&f.path), 1);
+    }
+
+    // Every file from before versioning is adopted at version 1, whatever
+    // shape it was in.
+    #[test]
+    fn unversioned_files_are_adopted() {
+        for schema in [OLDEST_SCHEMA, KILOGRAM_SCHEMA] {
+            let f = fixture();
+            seed(&f.path, schema);
+            drop(Db::open(&f.path).unwrap());
+            assert_eq!(user_version(&f.path), 1);
+        }
+        // Already in grams: only the version changes.
+        let (f, db) = open();
+        drop(db);
+        seed(&f.path, "PRAGMA user_version = 0");
+        drop(Db::open(&f.path).unwrap());
+        assert_eq!(user_version(&f.path), 1);
+    }
+
+    #[test]
+    fn a_file_ahead_of_this_build_is_refused() {
+        let (f, db) = open();
+        drop(db);
+        seed(&f.path, "PRAGMA user_version = 2");
+        assert!(Db::open(&f.path).is_err());
     }
 
     #[tokio::test]
