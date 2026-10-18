@@ -6,18 +6,18 @@
 //! readable as they are.
 
 use std::collections::HashSet;
-use std::fmt;
 use std::path::Path;
 
 use anyhow::{Context as _, Result, anyhow};
+use homelab::trace::{OpenTelemetrySpanExt as _, Status};
 use jiff::Zoned;
-use opentelemetry::KeyValue;
 use r2d2_sqlite::SqliteConnectionManager;
 use r2d2_sqlite::rusqlite::types::{
     FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef,
 };
 use r2d2_sqlite::rusqlite::{self, Connection, OptionalExtension as _, Row, params};
 use rusqlite_migration::{M, Migrations};
+use tracing::Instrument as _;
 
 use crate::clock;
 use crate::model::{Entry, Goal, Grams, Marker, Period};
@@ -89,26 +89,29 @@ impl Db {
         Ok(conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?)
     }
 
-    /// Runs `f` with the connection on a blocking thread, in a `db.<op>` span
+    /// Runs `f` with the connection on a blocking thread, in an `op` span
     /// of its own, so a slow query shows in a trace as itself rather than as
     /// time in the handler that asked for it.
+    ///
+    /// The name is set as the span is made: a span that has started ignores
+    /// a later otel.name. A failure marks the span rather than logging — the
+    /// handler logs it, with its whole chain, as it turns it into a 500.
     async fn run<T: Send + 'static>(
         &self,
         op: &'static str,
         f: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        let span = tracing::info_span!("db", otel.name = op, db.system = "sqlite",);
         let pool = self.pool.clone();
-        let work = async move {
-            tokio::task::spawn_blocking(move || f(&mut *pool.get()?))
-                .await
-                .map_err(|e| anyhow!("database task: {e}"))?
-        };
-        let attrs = vec![KeyValue::new("db.system", "sqlite")];
-        homelab::trace::op("weight-tracker/db", op, attrs, async {
-            work.await.map_err(Chain)
-        })
-        .await
-        .map_err(|Chain(e)| e)
+        let result = tokio::task::spawn_blocking(move || f(&mut *pool.get()?))
+            .instrument(span.clone())
+            .await
+            .map_err(|e| anyhow!("database task: {e}"))
+            .and_then(|r| r);
+        if let Err(err) = &result {
+            span.set_status(Status::error(format!("{err:#}")));
+        }
+        result
     }
 
     /// Every weigh-in, newest first.
@@ -495,15 +498,6 @@ impl FromSql for Period {
             .as_str()?
             .parse()
             .map_err(|_| FromSqlError::InvalidType)
-    }
-}
-
-/// An error shown with its whole context chain, for the span to record.
-struct Chain(anyhow::Error);
-
-impl fmt::Display for Chain {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#}", self.0)
     }
 }
 
