@@ -118,7 +118,8 @@ impl fmt::Display for Period {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[error("a period is \"morning\" or \"evening\"")]
 pub struct UnknownPeriod;
 
 impl FromStr for Period {
