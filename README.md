@@ -62,7 +62,8 @@ refused too, so that Access being removed or bypassed cannot read as "no
 identity required".
 
 Everything is behind that check except `/healthz`, `/metrics`, `/static/`,
-`/sw.js` and `/backup.db`, each named in `routes` in `main.go` with its reason.
+`/sw.js` and `/backup.db`, each named in `Server::router` in `src/web/mod.rs`
+with its reason.
 `/backup.db` is only half an exception: a caller with an Access identity is held
 to the allowlist like anywhere else, and one without needs the bearer token in
 `--backup-token-file`, which only the in-cluster backup job holds. Without that
@@ -111,9 +112,21 @@ crash mid-write replays the log rather than risking a torn database file.
 ## Upgrading
 
 Schema changes are applied automatically on startup, so upgrading is just
-deploying the new image. Migrations that rewrite a table (the kilogram-to-gram
-conversion) run inside a transaction and are skipped once applied, so
-restarting is safe and repeatable.
+deploying the new image. They are numbered steps, run by
+[rusqlite_migration](https://crates.io/crates/rusqlite_migration), and
+`PRAGMA user_version` records how many a database has had, so restarting is
+safe and repeatable. A change to the schema is a new step at the end of
+`migrations()` in `src/db.rs`; a step that has shipped is never edited.
+
+Databases from before the steps were numbered are at version 0, with weights
+in kilograms or grams. Startup brings any of them to version 1 first — the
+kilogram-to-gram rewrite runs inside a transaction — so an old snapshot from
+`homelab-backups` can still be restored.
+
+A database at a newer version than the image knows is refused: the pod
+crash-loops rather than running old code against a schema it does not know.
+So rolling the image back past a schema change means restoring a snapshot
+from before it, too.
 
 They still rewrite the live copy of the data. The hourly snapshot in
 `homelab-backups` is a backup already, but if a commit carries a migration,
