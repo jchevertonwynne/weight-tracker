@@ -58,7 +58,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    homelab::logging::init();
+    let tracing = homelab::init("weight-tracker", &args.otel_endpoint).context("init tracing")?;
 
     let allow = homelab::access::Allowlist::new(&args.allowed_emails, &args.dev_user);
     if !args.dev_user.is_empty() {
@@ -92,8 +92,6 @@ async fn main() -> Result<()> {
 
     homelab::profiling::spawn(args.pprof_addr);
 
-    let tracing =
-        homelab::trace::init("weight-tracker", &args.otel_endpoint).context("init tracing")?;
     let served = serve(&args, allow, &backup_token).await;
     // After the server has drained, so the last batch of spans — a rollout's
     // final requests — reaches Alloy.
