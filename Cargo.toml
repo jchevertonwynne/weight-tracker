@@ -23,7 +23,7 @@ memory-serve = { version = "2", features = ["force-embed"] }
 # Local wall-clock time is the whole domain here: the morning/evening split,
 # day boundaries and calendar arithmetic all happen in the zone TZ names.
 # homelab-rs already bundles the zone database, so it resolves on scratch.
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "1.0", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 csv = "1"
